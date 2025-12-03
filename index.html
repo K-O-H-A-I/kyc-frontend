@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>KYC Orchestrator Demo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div>
+        <h1>KYC Orchestrator Demo</h1>
+        <p class="subtitle">Upload images, audio, or video &rarr; Start a KYC job &rarr; Watch results update in real time.</p>
+      </div>
+      <div class="env-pill">
+        <span class="dot"></span>
+        <span>Demo Frontend</span>
+      </div>
+    </header>
+
+    <main class="app-main">
+      <section class="panel panel-left">
+        <h2>1. Create Job</h2>
+        <form id="job-form" autocomplete="off">
+          <div class="field">
+            <label for="userId">User ID</label>
+            <input type="text" id="userId" name="userId" value="demo_user" required>
+          </div>
+
+          <div class="media-group">
+            <h3>Media Inputs</h3>
+            <p class="hint">You can attach one or more files in each category. Only non-empty categories will be sent.</p>
+
+            <div class="field">
+              <label for="images">Images</label>
+              <input type="file" id="images" accept="image/*" multiple>
+              <span class="file-count" id="images-count">No files selected</span>
+            </div>
+
+            <div class="field">
+              <label for="videos">Videos</label>
+              <input type="file" id="videos" accept="video/*" multiple>
+              <span class="file-count" id="videos-count">No files selected</span>
+            </div>
+
+            <div class="field">
+              <label for="audios">Audio</label>
+              <input type="file" id="audios" accept="audio/*" multiple>
+              <span class="file-count" id="audios-count">No files selected</span>
+            </div>
+          </div>
+
+
+          <div class="model-group">
+            <h3>Image Models</h3>
+            <p class="hint">Choose which checks to run for uploaded images.</p>
+            <div class="toggle-row">
+              <label class="toggle-pill">
+                <input type="checkbox" id="imageDeepfakeToggle" checked>
+                <span>Image deepfake</span>
+              </label>
+              <label class="toggle-pill">
+                <input type="checkbox" id="imageFacematchToggle">
+                <span>Face match</span>
+              </label>
+            </div>
+            <p class="hint small">Face match requires at least two images; otherwise it will be ignored.</p>
+          </div>
+
+          <button type="submit" id="startJobBtn" class="btn-primary">
+            <span id="startJobBtnLabel">Start KYC Job</span>
+            <span id="startJobBtnSpinner" class="spinner hidden"></span>
+          </button>
+        </form>
+
+        <div class="status-log">
+          <div class="status-log-header">
+            <h3>Upload &amp; Job Log</h3>
+            <button type="button" id="clearLogBtn" class="btn-ghost">Clear</button>
+          </div>
+          <pre id="log"></pre>
+        </div>
+      </section>
+
+      <section class="panel panel-right">
+        <h2>2. Job Status &amp; Results</h2>
+
+        <div class="field horizontal">
+          <label for="jobIdInput">Job ID</label>
+          <input type="text" id="jobIdInput" placeholder="Last submitted job will appear here">
+          <button id="loadJobBtn" type="button" class="btn-secondary">Load</button>
+        </div>
+
+        <div class="pill-row">
+          <span id="activeJobBadge" class="pill pill-muted">No active job</span>
+          <button id="stopPollingBtn" type="button" class="btn-secondary" disabled>Stop Auto Refresh</button>
+        </div>
+
+        <div id="jobSummary" class="card card-summary hidden">
+          <div class="card-header">
+            <span class="badge" id="jobStatusBadge">-</span>
+            <span class="mono" id="jobIdDisplay"></span>
+          </div>
+          <div class="card-body">
+            <p><strong>User ID:</strong> <span id="jobUserId"></span></p>
+            <p><strong>Inputs:</strong></p>
+            <div id="jobInputs" class="chip-row"></div>
+            <p class="meta">
+              <span id="jobCreatedAt"></span>
+            </p>
+          </div>
+        </div>
+
+        <div id="resultsContainer" class="results-grid">
+          <p class="placeholder">No results yet. Submit a job and wait for it to complete.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <span>API base:&nbsp;<code id="apiBaseDisplay"></code></span>
+      <span>&middot;</span>
+      <span>Tip: you can copy/paste the Job ID into tools like Postman to inspect the raw JSON.</span>
+    </footer>
+  </div>
+
+  <script src="./main.js"></script>
+</body>
+</html>

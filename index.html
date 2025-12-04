@@ -20,6 +20,34 @@
     </header>
 
     <main class="app-main">
+      <div class="preview-panel">
+        <div class="preview-panel-inner">
+          <div class="preview-left">
+            <h3>Selected Media</h3>
+            <div class="preview-columns">
+              <div class="preview-column">
+                <h4>Images</h4>
+                <div id="imagePreviewList" class="preview-list"></div>
+              </div>
+              <div class="preview-column">
+                <h4>Videos</h4>
+                <div id="videoPreviewList" class="preview-list"></div>
+              </div>
+              <div class="preview-column">
+                <h4>Audio</h4>
+                <div id="audioPreviewList" class="preview-list"></div>
+              </div>
+            </div>
+          </div>
+          <div class="preview-right">
+            <h3>Output</h3>
+            <div id="overviewOutput" class="output-overview">
+              <p class="hint small">Run a job to see model predictions here.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <section class="panel panel-left">
         <h2>1. Create Job</h2>
         <form id="job-form" autocomplete="off">

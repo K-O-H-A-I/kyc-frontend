@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>KYC Orchestrator Demo</title>
+  <title>Reagvis Labs</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="./style.css">
 </head>
@@ -10,12 +10,12 @@
   <div class="app">
     <header class="app-header">
       <div>
-        <h1>KYC Orchestrator Demo</h1>
-        <p class="subtitle">Upload images, audio, or video &rarr; Start a KYC job &rarr; Watch results update in real time.</p>
+        <h1>Reagvis Labs</h1>
+        <p class="subtitle">Media authenticity & KYC orchestration demo.</p>
       </div>
       <div class="env-pill">
         <span class="dot"></span>
-        <span>Demo Frontend</span>
+        <span>Reagvis Labs</span>
       </div>
     </header>
 
@@ -51,6 +51,24 @@
             </div>
           </div>
 
+
+          <div class="preview-panel">
+            <h3>Selected Media Preview</h3>
+            <div class="preview-columns">
+              <div class="preview-column">
+                <h4>Images</h4>
+                <div id="imagePreviewList" class="preview-list"></div>
+              </div>
+              <div class="preview-column">
+                <h4>Videos</h4>
+                <div id="videoPreviewList" class="preview-list"></div>
+              </div>
+              <div class="preview-column">
+                <h4>Audio</h4>
+                <div id="audioPreviewList" class="preview-list"></div>
+              </div>
+            </div>
+          </div>
 
           <div class="model-group">
             <h3>Image Models</h3>
@@ -103,7 +121,7 @@
             <span class="mono" id="jobIdDisplay"></span>
           </div>
           <div class="card-body">
-            <p><strong>User ID:</strong> <span id="jobUserId"></span></p>
+            <p class="user-id-row"><strong>User ID:</strong> <span id="jobUserId"></span></p>
             <p><strong>Inputs:</strong></p>
             <div id="jobInputs" class="chip-row"></div>
             <p class="meta">

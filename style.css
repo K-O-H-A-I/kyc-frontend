@@ -23,9 +23,9 @@ body {
 
 /* Layout */
 .app {
-  background: radial-gradient(circle at top left, #1e293b, #020617 60%);
-  border-radius: 16px;
-  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.6);
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
   color: #e5e7eb;
   max-width: 1200px;
   width: 100%;
@@ -34,6 +34,7 @@ body {
   flex-direction: column;
   padding: 20px 24px;
 }
+
 
 .app-header {
   display: flex;
@@ -537,4 +538,71 @@ button {
     flex-direction: column;
     align-items: flex-start;
   }
+}
+
+
+/* Hide controls we don't need in the simplified UI */
+.field.horizontal,
+.pill-row,
+.app-footer,
+.user-id-row {
+  display: none;
+}
+
+/* Media preview strip */
+.preview-panel {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: rgba(15, 23, 42, 0.9);
+}
+
+.preview-panel h3 {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+}
+
+.preview-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.preview-column h4 {
+  margin: 0 0 4px;
+  font-size: 0.8rem;
+  color: #9ca3af;
+}
+
+.preview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.preview-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.preview-thumb {
+  width: 100%;
+  max-height: 120px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid rgba(31, 41, 55, 0.8);
+}
+
+.preview-media {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid rgba(31, 41, 55, 0.8);
+}
+
+.preview-name {
+  font-size: 0.75rem;
+  color: #9ca3af;
+  word-break: break-all;
 }

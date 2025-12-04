@@ -1,9 +1,3 @@
-// Simple, framework-free frontend for the KYC orchestrator.
-//
-// Implements the contract:
-//   POST /uploads/presign -> PUT to S3 -> POST /jobs -> GET /jobs/{jobId}
-//
-// Update this if your API Gateway stage changes.
 const API_BASE = "https://cjv956i6qf.execute-api.ap-south-1.amazonaws.com";
 
 const els = {
@@ -16,6 +10,9 @@ const els = {
   imagesCount: document.getElementById("images-count"),
   videosCount: document.getElementById("videos-count"),
   audiosCount: document.getElementById("audios-count"),
+  imagePreviewList: document.getElementById("imagePreviewList"),
+  videoPreviewList: document.getElementById("videoPreviewList"),
+  audioPreviewList: document.getElementById("audioPreviewList"),
   imageDeepfakeToggle: document.getElementById("imageDeepfakeToggle"),
   imageFacematchToggle: document.getElementById("imageFacematchToggle"),
   startJobBtn: document.getElementById("startJobBtn"),
@@ -129,15 +126,62 @@ function clearResults() {
   els.resultsContainer.innerHTML = '<p class="placeholder">No results yet. Submit a job and wait for it to complete.</p>';
 }
 
-// ---------- File input listeners ----------
-[["images", "imagesCount"], ["videos", "videosCount"], ["audios", "audiosCount"]].forEach(
-  ([inputId, labelId]) => {
-    const inputEl = els[inputId];
-    const labelEl = els[labelId];
-    if (!inputEl || !labelEl) return;
-    inputEl.addEventListener("change", () => setFileCount(inputEl, labelEl));
-  }
-);
+// ---------- File input listeners & previews ----------
+function updatePreview(listEl, files, kind) {
+  if (!listEl) return;
+  listEl.innerHTML = "";
+  const fileArray = Array.from(files || []);
+  if (fileArray.length === 0) return;
+
+  fileArray.forEach((file) => {
+    const url = URL.createObjectURL(file);
+    const wrapper = document.createElement("div");
+    wrapper.className = "preview-item";
+
+    let mediaEl = null;
+    if (kind === "image") {
+      mediaEl = document.createElement("img");
+      mediaEl.className = "preview-thumb";
+      mediaEl.src = url;
+      mediaEl.alt = file.name;
+    } else if (kind === "video") {
+      mediaEl = document.createElement("video");
+      mediaEl.className = "preview-media";
+      mediaEl.src = url;
+      mediaEl.controls = true;
+    } else if (kind === "audio") {
+      mediaEl = document.createElement("audio");
+      mediaEl.className = "preview-media";
+      mediaEl.src = url;
+      mediaEl.controls = true;
+    }
+
+    if (mediaEl) {
+      wrapper.appendChild(mediaEl);
+    }
+    const nameEl = document.createElement("div");
+    nameEl.className = "preview-name";
+    nameEl.textContent = file.name;
+    wrapper.appendChild(nameEl);
+
+    listEl.appendChild(wrapper);
+  });
+}
+
+[
+  ["images", "imagesCount", "imagePreviewList", "image"],
+  ["videos", "videosCount", "videoPreviewList", "video"],
+  ["audios", "audiosCount", "audioPreviewList", "audio"],
+].forEach(([inputId, labelId, previewId, kind]) => {
+  const inputEl = els[inputId];
+  const labelEl = els[labelId];
+  const previewEl = els[previewId];
+  if (!inputEl || !labelEl) return;
+  inputEl.addEventListener("change", () => {
+    setFileCount(inputEl, labelEl);
+    updatePreview(previewEl, inputEl.files, kind);
+  });
+});
 
 // ---------- Polling ----------
 let pollTimer = null;

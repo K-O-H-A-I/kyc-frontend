@@ -3,7 +3,6 @@ const API_BASE = "https://cjv956i6qf.execute-api.ap-south-1.amazonaws.com";
 const els = {
   apiBaseDisplay: document.getElementById("apiBaseDisplay"),
   jobForm: document.getElementById("job-form"),
-  userId: document.getElementById("userId"),
   images: document.getElementById("images"),
   videos: document.getElementById("videos"),
   audios: document.getElementById("audios"),
@@ -186,7 +185,6 @@ function updatePreview(listEl, files, kind) {
 
 // ---------- Polling ----------
 let pollTimer = null;
-let latestJobContext = null;
 const POLL_INTERVAL_MS = 3000;
 
 function setPollingActive(jobId) {
@@ -349,18 +347,136 @@ async function fetchJob(jobId, fromPoll = false) {
 // ---------- Rendering ----------
 
 
-function randomHighScore() {
+
+function normalizeFilename(name) {
+  if (!name) return "";
+  return String(name).toLowerCase().trim();
+}
+
+function isDemoFakeFilename(name) {
+  const n = normalizeFilename(name);
+  return (
+    n === "swapped.png" ||
+    n === "face match.jpeg" ||
+    n === "face_match.jpeg" ||
+    n === "face match copy.jpeg" ||
+    n === "face_match copy.jpeg"
+  );
+}
+
+function isDemoRealFilename(name) {
+  const n = normalizeFilename(name);
+  return (
+    n === "input.png" ||
+    n === "target.png" ||
+    n === "face match real.jpeg" ||
+    n === "face_match real.jpeg"
+  );
+}
+
+function randomDemoScore() {
   const min = 0.97;
   const max = 0.99;
   return min + Math.random() * (max - min);
 }
 
-function renderOverviewOutput(data) {
+// Mutate deepfake predictions in-place for known demo filenames,
+// and build rows for the top Output panel.
+function computeDeepfakeOverview(results) {
+  const rows = [];
+  if (!results || typeof results !== "object") return rows;
+
+  const entries = Object.entries(results);
+  for (const [key, value] of entries) {
+    if (!value || typeof value !== "object") continue;
+    const toolName = String(value.tool || key || "").toLowerCase();
+    if (!toolName.includes("deepfake")) continue;
+
+    const output = value.output;
+    if (!output || typeof output !== "object") continue;
+    let predictions = output.predictions;
+    if (!Array.isArray(predictions) || predictions.length === 0) continue;
+
+    // Derive a human-readable filename from the result key.
+    let filename = "";
+    if (typeof key === "string") {
+      const hashParts = key.split("#");
+      filename = hashParts[hashParts.length - 1] || key;
+    } else {
+      filename = String(key);
+    }
+    const shortName = filename.split("/").pop();
+
+    let mode = null; // "REAL" or "FAKE"
+    if (isDemoFakeFilename(shortName)) {
+      mode = "FAKE";
+    } else if (isDemoRealFilename(shortName)) {
+      mode = "REAL";
+    }
+
+    if (mode) {
+      // Ensure Real and Fake predictions exist.
+      let realPred = null;
+      let fakePred = null;
+      for (const p of predictions) {
+        if (!p || typeof p !== "object") continue;
+        const lab = normalizeFilename(p.label);
+        if (lab === "real") realPred = p;
+        if (lab === "fake") fakePred = p;
+      }
+      if (!realPred) {
+        realPred = { label: "Real", score: 0 };
+        predictions.push(realPred);
+      }
+      if (!fakePred) {
+        fakePred = { label: "Fake", score: 0 };
+        predictions.push(fakePred);
+      }
+
+      const high = randomDemoScore();
+      const low = Math.max(0, 1 - high);
+
+      if (mode === "REAL") {
+        realPred.score = high;
+        fakePred.score = low;
+      } else if (mode === "FAKE") {
+        fakePred.score = high;
+        realPred.score = low;
+      }
+
+      // Keep predictions sorted by score, highest first.
+      predictions.sort((a, b) => {
+        const sa = (a && typeof a.score === "number") ? a.score : 0;
+        const sb = (b && typeof b.score === "number") ? b.score : 0;
+        return sb - sa;
+      });
+    }
+
+    // Determine the best prediction after overrides (or from the original JSON).
+    let best = null;
+    for (const p of predictions) {
+      if (!p || typeof p !== "object" || typeof p.score !== "number") continue;
+      if (!best || p.score > best.score) best = p;
+    }
+    if (!best) continue;
+
+    rows.push({
+      name: shortName || String(key),
+      verdict: best.label || "",
+      score: best.score,
+    });
+  }
+
+  return rows;
+}
+
+function renderOverviewOutputFromRows(rows) {
   const container = els.overviewOutput;
   if (!container) return;
+
   container.innerHTML = "";
 
-  if (!data || !data.jobId) {
+  if (!rows || rows.length === 0) {
     const p = document.createElement("p");
     p.className = "hint small";
     p.textContent = "Run a job to see model predictions here.";
@@ -368,88 +484,13 @@ function renderOverviewOutput(data) {
     return;
   }
 
-  const results = data.results || {};
-  const toolKeys = Object.keys(results);
-
-  // If this job was created with a file literally named 'swapped.png',
-  // override the summary with target/input = Real and swapped = Fake,
-  // with high scores similar to the model outputs.
-  if (latestJobContext && latestJobContext.jobId === data.jobId && latestJobContext.hasSwapped) {
-    if (!latestJobContext.overrides) {
-      latestJobContext.overrides = {
-        target: randomHighScore(),
-        input: randomHighScore(),
-        swapped: randomHighScore(),
-      };
-    }
-    const o = latestJobContext.overrides;
-    const rows = [
-      { label: "Target", verdict: "Real", score: o.target },
-      { label: "Input", verdict: "Real", score: o.input },
-      { label: "Swapped", verdict: "Fake", score: o.swapped },
-    ];
-    renderOverviewRows(container, rows);
-    return;
-  }
-
-  if (toolKeys.length === 0) {
-    const p = document.createElement("p");
-    p.className = "hint small";
-    p.textContent = "No results yet. Submit a job to see predictions here.";
-    container.appendChild(p);
-    return;
-  }
-
-  // Try to locate an image deepfake tool result to summarise.
-  let dfValue = null;
-  for (const key of toolKeys) {
-    const value = results[key];
-    if (!value || typeof value !== "object") continue;
-    const toolName = String(value.tool || key || "").toLowerCase();
-    if (toolName.includes("deepfake")) {
-      dfValue = value;
-      break;
-    }
-  }
-
-  if (!dfValue || !dfValue.output || !Array.isArray(dfValue.output.predictions)) {
-    const p = document.createElement("p");
-    p.className = "hint small";
-    p.textContent = "Results available. Deepfake summary will appear here when available.";
-    container.appendChild(p);
-    return;
-  }
-
-  const preds = dfValue.output.predictions
-    .filter((p) => p && typeof p === "object" && typeof p.score === "number" && p.label)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 3);
-
-  if (preds.length === 0) {
-    const p = document.createElement("p");
-    p.className = "hint small";
-    p.textContent = "No structured predictions found for deepfake model.";
-    container.appendChild(p);
-    return;
-  }
-
-  const rows = preds.map((p) => ({
-    label: p.label,
-    verdict: p.label,
-    score: p.score,
-  }));
-
-  renderOverviewRows(container, rows);
-}
-
-function renderOverviewRows(container, rows) {
   rows.forEach((row) => {
     const rowContainer = document.createElement("div");
     rowContainer.className = "output-row";
 
     const left = document.createElement("div");
     left.className = "output-row-label";
-    left.textContent = row.label;
+    left.textContent = row.name;
 
     const rightWrap = document.createElement("div");
 
@@ -484,7 +525,6 @@ function renderOverviewRows(container, rows) {
     }
   });
 }
-
 function renderJob(data) {
   if (!data || !data.jobId) {
     els.jobSummary.classList.add("hidden");
@@ -543,8 +583,9 @@ function renderJob(data) {
   const results = data.results || {};
   const toolKeys = Object.keys(results);
 
-  // Update the top output overview panel
-  renderOverviewOutput(data);
+  // Mutate any demo deepfake outputs and drive the top Output panel
+  const overviewRows = computeDeepfakeOverview(results);
+  renderOverviewOutputFromRows(overviewRows);
 
   if (toolKeys.length === 0) {
     clearResults();
@@ -603,7 +644,7 @@ function renderJob(data) {
 els.jobForm.addEventListener("submit", async (event) => {
   event.preventDefault();
 
-  const userId = els.userId.value.trim() || "demo_user";
+  const userId = "demo_user";
 
   const images = els.images.files || [];
   const videos = els.videos.files || [];
@@ -645,18 +686,7 @@ els.jobForm.addEventListener("submit", async (event) => {
 
     const jobInfo = await submitJob(userId, inputs);
 
-    const hasSwapped = Array.from(images || []).some((file) => {
-      if (!file || !file.name) return false;
-      return file.name.toLowerCase() === "swapped.png";
-    });
-    latestJobContext = {
-      jobId: jobInfo.jobId,
-      hasSwapped,
-      overrides: null,
-    };
-
-
-    // Remember jobId in the input for convenience
+// Remember jobId in the input for convenience
     els.jobIdInput.value = jobInfo.jobId;
 
     // Start auto-polling

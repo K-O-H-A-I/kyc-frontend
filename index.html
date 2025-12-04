@@ -11,7 +11,7 @@
     <header class="app-header">
       <div>
         <h1>Reagvis Labs</h1>
-        <p class="subtitle">Media authenticity & KYC orchestration demo.</p>
+        <p class="subtitle">Deepfake Detection</p>
       </div>
       <div class="env-pill">
         <span class="dot"></span>
@@ -51,11 +51,6 @@
       <section class="panel panel-left">
         <h2>1. Create Job</h2>
         <form id="job-form" autocomplete="off">
-          <div class="field">
-            <label for="userId">User ID</label>
-            <input type="text" id="userId" name="userId" value="demo_user" required>
-          </div>
-
           <div class="media-group">
             <h3>Media Inputs</h3>
             <p class="hint">You can attach one or more files in each category. Only non-empty categories will be sent.</p>
@@ -80,25 +75,7 @@
           </div>
 
 
-          <div class="preview-panel">
-            <h3>Selected Media Preview</h3>
-            <div class="preview-columns">
-              <div class="preview-column">
-                <h4>Images</h4>
-                <div id="imagePreviewList" class="preview-list"></div>
-              </div>
-              <div class="preview-column">
-                <h4>Videos</h4>
-                <div id="videoPreviewList" class="preview-list"></div>
-              </div>
-              <div class="preview-column">
-                <h4>Audio</h4>
-                <div id="audioPreviewList" class="preview-list"></div>
-              </div>
-            </div>
-          </div>
-
-          <div class="model-group">
+                    <div class="model-group">
             <h3>Image Models</h3>
             <p class="hint">Choose which checks to run for uploaded images.</p>
             <div class="toggle-row">

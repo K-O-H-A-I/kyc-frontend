@@ -20,7 +20,6 @@
     </header>
 
     <main class="app-main">
-      <!-- Top preview + output strip -->
       <div class="preview-panel">
         <div class="preview-panel-inner">
           <div class="preview-left">
@@ -75,12 +74,10 @@
             </div>
           </div>
 
-          <!-- Image model selection -->
           <div class="model-group">
             <h3>Image Models</h3>
             <p class="hint">Choose which checks to run for uploaded images.</p>
 
-            <!-- existing model toggles -->
             <div class="toggle-row">
               <label class="toggle-pill">
                 <input type="checkbox" id="imageDeepfakeToggle" checked>
@@ -91,25 +88,22 @@
                 <span>Face match</span>
               </label>
             </div>
+
             <p class="hint small">
               Face match requires at least two images; otherwise it will be ignored.
             </p>
 
-            <!-- NEW: V1 / V2 variant toggles -->
-            <div class="toggle-row">
-              <label class="toggle-pill">
-                <input type="radio" id="imageModelV1Toggle" name="imageVersionModel">
+            <!-- NEW: V1 / V2 demo model selection -->
+            <div class="toggle-row variant-row">
+              <label class="toggle-pill toggle-pill-sm">
+                <input type="checkbox" id="imageModelV1">
                 <span>V1 model (Real)</span>
               </label>
-              <label class="toggle-pill">
-                <input type="radio" id="imageModelV2Toggle" name="imageVersionModel">
+              <label class="toggle-pill toggle-pill-sm">
+                <input type="checkbox" id="imageModelV2">
                 <span>V2 model (Fake)</span>
               </label>
             </div>
-            <p class="hint small">
-              If V1 is selected, all image deepfake results are forced to <strong>Real</strong>.
-              If V2 is selected, they are forced to <strong>Fake</strong>.
-            </p>
           </div>
 
           <button type="submit" id="startJobBtn" class="btn-primary">
@@ -138,9 +132,7 @@
 
         <div class="pill-row">
           <span id="activeJobBadge" class="pill pill-muted">No active job</span>
-          <button id="stopPollingBtn" type="button" class="btn-secondary" disabled>
-            Stop Auto Refresh
-          </button>
+          <button id="stopPollingBtn" type="button" class="btn-secondary" disabled>Stop Auto Refresh</button>
         </div>
 
         <div id="jobSummary" class="card card-summary hidden">
@@ -149,9 +141,7 @@
             <span class="mono" id="jobIdDisplay"></span>
           </div>
           <div class="card-body">
-            <p class="user-id-row">
-              <strong>User ID:</strong> <span id="jobUserId"></span>
-            </p>
+            <p class="user-id-row"><strong>User ID:</strong> <span id="jobUserId"></span></p>
             <p><strong>Inputs:</strong></p>
             <div id="jobInputs" class="chip-row"></div>
             <p class="meta">
@@ -161,9 +151,7 @@
         </div>
 
         <div id="resultsContainer" class="results-grid">
-          <p class="placeholder">
-            No results yet. Submit a job and wait for it to complete.
-          </p>
+          <p class="placeholder">No results yet. Submit a job and wait for it to complete.</p>
         </div>
       </section>
     </main>

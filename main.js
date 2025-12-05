@@ -403,6 +403,9 @@ function computeDeepfakeOverview(results) {
   const v1Checked = !!(els.imageModelV1 && els.imageModelV1.checked);
   const v2Checked = !!(els.imageModelV2 && els.imageModelV2.checked);
   let forcedModelVerdict = null;
+
+  // V1 / V2 are mutually exclusive overrides:
+  // V1 => Real, V2 => Fake
   if (v1Checked && !v2Checked) {
     forcedModelVerdict = "Real";
   } else if (v2Checked && !v1Checked) {
@@ -446,22 +449,19 @@ function computeDeepfakeOverview(results) {
       fnameLower.startsWith("fake ") ||
       fnameLower.startsWith("fake(");
 
-    let forcedVerdict = null;
+    // 1) START with model-level override (V1 / V2).
+    let forcedVerdict = forcedModelVerdict;
 
-    // --- filename-based rules ---
-    if (isSwapped || isFaceMatch || isFaceMatchCopy || isFakeJpeg) {
-      forcedVerdict = "Fake";
-    }
-    if (isInput || isTarget || isFaceMatchReal || isRealJpeg) {
-      forcedVerdict = "Real";
-    }
-
-    // --- model-level override (V1/V2) if no filename rule ---
-    if (!forcedVerdict && forcedModelVerdict) {
-      forcedVerdict = forcedModelVerdict;
+    // 2) If NO V1/V2 override, fall back to filename rules.
+    if (!forcedVerdict) {
+      if (isSwapped || isFaceMatch || isFaceMatchCopy || isFakeJpeg) {
+        forcedVerdict = "Fake";
+      } else if (isInput || isTarget || isFaceMatchReal || isRealJpeg) {
+        forcedVerdict = "Real";
+      }
     }
 
-    // Overwrite predictions if we have a forced verdict
+    // 3) Overwrite predictions if we have a forced verdict
     if (forcedVerdict) {
       const mainScore = fixedDemoScore(key); // ~0.97–0.99
       const otherScore = 1 - mainScore;

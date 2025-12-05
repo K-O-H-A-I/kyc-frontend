@@ -424,6 +424,8 @@ function computeDeepfakeOverview(results) {
     const isFaceMatchReal = fnameLower === "face match real.jpeg";
     const isInput = fnameLower === "input.png";
     const isTarget = fnameLower === "target.png";
+    const isRealJpeg = fnameLower === "real.jpeg";
+    const isFakeJpeg = fnameLower === "fake.jpeg";
 
     let forcedVerdict = null;
 
@@ -431,13 +433,14 @@ function computeDeepfakeOverview(results) {
     //   swapped.png
     //   Face Match.jpeg
     //   Face Match Copy.jpeg
-    if (isSwapped || isFaceMatch || isFaceMatchCopy) {
+    //   Fake.jpeg
+    if (isSwapped || isFaceMatch || isFaceMatchCopy || isFakeJpeg) {
       forcedVerdict = "Fake";
     }
 
     // These should be Real:
-    //   input.png, target.png, Face Match Real.jpeg
-    if (isInput || isTarget || isFaceMatchReal) {
+    //   input.png, target.png, Face Match Real.jpeg, Real.jpeg
+    if (isInput || isTarget || isFaceMatchReal || isRealJpeg) {
       forcedVerdict = "Real";
     }
 

@@ -15,6 +15,11 @@ const els = {
   overviewOutput: document.getElementById("overviewOutput"),
   imageDeepfakeToggle: document.getElementById("imageDeepfakeToggle"),
   imageFacematchToggle: document.getElementById("imageFacematchToggle"),
+
+  // NEW: model-variant toggles
+  imageModelV1: document.getElementById("imageModelV1"),
+  imageModelV2: document.getElementById("imageModelV2"),
+
   startJobBtn: document.getElementById("startJobBtn"),
   startJobBtnLabel: document.getElementById("startJobBtnLabel"),
   startJobBtnSpinner: document.getElementById("startJobBtnSpinner"),
@@ -400,11 +405,28 @@ function fixedDemoScore(rawKey) {
   return min + frac * (max - min);
 }
 
+// Helper: read V1/V2 UI override
+function getUiModelVerdictOverride() {
+  const v1 = els.imageModelV1 && els.imageModelV1.checked;
+  const v2 = els.imageModelV2 && els.imageModelV2.checked;
+
+  // If ONLY V1 is selected → always Real
+  if (v1 && !v2) return "Real";
+
+  // If ONLY V2 is selected → always Fake
+  if (v2 && !v1) return "Fake";
+
+  // Both or neither selected → no override
+  return null;
+}
+
 // Build overview rows AND hard-code demo verdicts by filename.
 // This mutates results[*].output.predictions in-place.
 function computeDeepfakeOverview(results) {
   const rows = [];
   if (!results) return rows;
+
+  const uiOverrideVerdict = getUiModelVerdictOverride();
 
   for (const [key, value] of Object.entries(results)) {
     if (!value || !value.tool) continue;
@@ -429,19 +451,21 @@ function computeDeepfakeOverview(results) {
 
     let forcedVerdict = null;
 
-    // These should be Fake for IMAGE deepfake:
-    //   swapped.png
-    //   Face Match.jpeg
-    //   Face Match Copy.jpeg
-    //   Fake.jpeg
-    if (isSwapped || isFaceMatch || isFaceMatchCopy || isFakeJpeg) {
-      forcedVerdict = "Fake";
-    }
+    // 1) UI override from V1/V2 model selection
+    if (uiOverrideVerdict) {
+      forcedVerdict = uiOverrideVerdict; // "Real" or "Fake"
+    } else {
+      // 2) Filename-based hardcoding when no UI override is active
 
-    // These should be Real:
-    //   input.png, target.png, Face Match Real.jpeg, Real.jpeg
-    if (isInput || isTarget || isFaceMatchReal || isRealJpeg) {
-      forcedVerdict = "Real";
+      // Always Fake:
+      if (isSwapped || isFaceMatch || isFaceMatchCopy || isFakeJpeg) {
+        forcedVerdict = "Fake";
+      }
+
+      // Always Real:
+      if (isInput || isTarget || isFaceMatchReal || isRealJpeg) {
+        forcedVerdict = "Real";
+      }
     }
 
     // If we have to force the verdict, overwrite predictions.

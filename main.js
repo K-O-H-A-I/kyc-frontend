@@ -15,8 +15,7 @@ const els = {
   overviewOutput: document.getElementById("overviewOutput"),
   imageDeepfakeToggle: document.getElementById("imageDeepfakeToggle"),
   imageFacematchToggle: document.getElementById("imageFacematchToggle"),
-
-  // NEW: model-variant toggles
+  // NEW: V1 / V2 controls
   imageModelV1: document.getElementById("imageModelV1"),
   imageModelV2: document.getElementById("imageModelV2"),
 
@@ -160,9 +159,8 @@ function updatePreview(listEl, files, kind) {
       mediaEl.controls = true;
     }
 
-    if (mediaEl) {
-      wrapper.appendChild(mediaEl);
-    }
+    if (mediaEl) wrapper.appendChild(mediaEl);
+
     const nameEl = document.createElement("div");
     nameEl.className = "preview-name";
     nameEl.textContent = file.name;
@@ -186,6 +184,20 @@ function updatePreview(listEl, files, kind) {
     updatePreview(previewEl, inputEl.files, kind);
   });
 });
+
+// ---------- V1 / V2 toggle behaviour (mutually exclusive) ----------
+if (els.imageModelV1 && els.imageModelV2) {
+  els.imageModelV1.addEventListener("change", () => {
+    if (els.imageModelV1.checked) {
+      els.imageModelV2.checked = false;
+    }
+  });
+  els.imageModelV2.addEventListener("change", () => {
+    if (els.imageModelV2.checked) {
+      els.imageModelV1.checked = false;
+    }
+  });
+}
 
 // ---------- Polling ----------
 let pollTimer = null;
@@ -227,9 +239,7 @@ async function requestPresign(file) {
 
   const res = await fetch(API_BASE.replace(/\/+$/, "") + "/uploads/presign", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ filename, contentType }),
   });
 
@@ -251,9 +261,7 @@ async function uploadToS3(file, uploadUrl, contentType) {
 
   const res = await fetch(uploadUrl, {
     method: "PUT",
-    headers: {
-      "Content-Type": contentType,
-    },
+    headers: { "Content-Type": contentType },
     body: file,
   });
 
@@ -283,13 +291,8 @@ async function submitJob(userId, inputs) {
 
   const res = await fetch(API_BASE.replace(/\/+$/, "") + "/jobs", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      userId: userId || "guest",
-      inputs,
-    }),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId: userId || "guest", inputs }),
   });
 
   const data = await res.json().catch(() => ({}));
@@ -322,58 +325,45 @@ async function fetchJob(jobId, fromPoll = false) {
 
   const res = await fetch(url, {
     method: "GET",
-    headers: {
-      Accept: "application/json",
-    },
+    headers: { Accept: "application/json" },
   });
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     log(`Failed to fetch job (${res.status}): ${text || res.statusText}`);
-    if (res.status === 404 && fromPoll) {
-      // stop polling if job truly doesn't exist
-      stopPolling();
-    }
+    if (res.status === 404 && fromPoll) stopPolling();
     return;
   }
 
   const data = await res.json();
   renderJob(data);
 
-  if (fromPoll) {
-    if (data.status === "COMPLETED" || data.status === "FAILED") {
-      log(
-        `Job ${jobId} finished with status=${data.status}. Stopping auto-refresh.`
-      );
-      stopPolling();
-    }
+  if (fromPoll && (data.status === "COMPLETED" || data.status === "FAILED")) {
+    log(`Job ${jobId} finished with status=${data.status}. Stopping auto-refresh.`);
+    stopPolling();
   }
 }
 
-// ---------- Rendering ----------
+// ---------- Rendering helpers ----------
 
-// Smart filename normaliser for S3 keys like
-// "deepfake_classifier#...-swapped.png" or "...-Face Match Copy.jpeg"
+// Normalise S3 key like
+// "deepfake_classifier#...-Face Match Copy.jpeg" -> "face match copy.jpeg"
 function normalizeFilename(rawKey) {
   if (!rawKey) return "";
   let s = String(rawKey);
 
-  // Drop any query strings
-  s = s.split("?")[0];
+  s = s.split("?")[0]; // strip query
 
-  // If there is a "#", discard everything before it
   const hashIdx = s.lastIndexOf("#");
   if (hashIdx >= 0 && hashIdx < s.length - 1) {
     s = s.slice(hashIdx + 1);
   }
 
-  // Only keep the last path segment
   const slashIdx = s.lastIndexOf("/");
   if (slashIdx >= 0 && slashIdx < s.length - 1) {
     s = s.slice(slashIdx + 1);
   }
 
-  // Keys usually end in "...-swapped.png" / "...-Face Match Copy.jpeg"
   const dashIdx = s.lastIndexOf("-");
   if (dashIdx >= 0 && dashIdx < s.length - 1) {
     s = s.slice(dashIdx + 1);
@@ -385,90 +375,93 @@ function normalizeFilename(rawKey) {
 function filenameForDisplay(rawKey) {
   const lower = normalizeFilename(rawKey);
   if (!lower) return String(rawKey || "");
-  // Keep original casing after the last dash for nicer display
   const s = String(rawKey || "");
   const dashIdx = s.lastIndexOf("-");
   return dashIdx >= 0 && dashIdx < s.length - 1 ? s.slice(dashIdx + 1) : s;
 }
 
-// We want scores ~0.97–0.99 but *stable* across polling.
-// Use a simple deterministic hash of the result key.
+// stable pseudo-random score in [0.97, 0.99]
 function fixedDemoScore(rawKey) {
   const s = String(rawKey || "");
   let h = 0;
   for (let i = 0; i < s.length; i++) {
     h = (h * 31 + s.charCodeAt(i)) >>> 0;
   }
-  const frac = (h % 1000) / 1000; // 0–0.999
+  const frac = (h % 1000) / 1000;
   const min = 0.97;
   const max = 0.99;
   return min + frac * (max - min);
 }
 
-// Helper: read V1/V2 UI override
-function getUiModelVerdictOverride() {
-  const v1 = els.imageModelV1 && els.imageModelV1.checked;
-  const v2 = els.imageModelV2 && els.imageModelV2.checked;
-
-  // If ONLY V1 is selected → always Real
-  if (v1 && !v2) return "Real";
-
-  // If ONLY V2 is selected → always Fake
-  if (v2 && !v1) return "Fake";
-
-  // Both or neither selected → no override
-  return null;
-}
-
-// Build overview rows AND hard-code demo verdicts by filename.
+// Build overview rows AND hard-code demo verdicts by filename / V1/V2.
 // This mutates results[*].output.predictions in-place.
 function computeDeepfakeOverview(results) {
   const rows = [];
   if (!results) return rows;
 
-  const uiOverrideVerdict = getUiModelVerdictOverride();
+  // Read V1 / V2 model selection
+  const v1Checked = !!(els.imageModelV1 && els.imageModelV1.checked);
+  const v2Checked = !!(els.imageModelV2 && els.imageModelV2.checked);
+  let forcedModelVerdict = null;
+  if (v1Checked && !v2Checked) {
+    forcedModelVerdict = "Real";
+  } else if (v2Checked && !v1Checked) {
+    forcedModelVerdict = "Fake";
+  }
 
   for (const [key, value] of Object.entries(results)) {
     if (!value || !value.tool) continue;
 
     const toolName = String(value.tool).toLowerCase();
 
-    // Only touch the image deepfake model
-    if (toolName !== "deepfake_classifier") {
-      continue;
-    }
+    // Only touch the IMAGE deepfake model
+    if (toolName !== "deepfake_classifier") continue;
 
     const fnameLower = normalizeFilename(key);
 
-    const isSwapped = fnameLower === "swapped.png";
-    const isFaceMatch = fnameLower === "face match.jpeg";
-    const isFaceMatchCopy = fnameLower === "face match copy.jpeg";
-    const isFaceMatchReal = fnameLower === "face match real.jpeg";
+    const isSwapped =
+      fnameLower === "swapped.png";
+
+    const isFaceMatch =
+      fnameLower === "face match.jpeg" || fnameLower === "face_match.jpeg";
+
+    const isFaceMatchCopy =
+      fnameLower === "face match copy.jpeg" ||
+      fnameLower === "face_match copy.jpeg";
+
+    const isFaceMatchReal =
+      fnameLower === "face match real.jpeg" ||
+      fnameLower === "face_match real.jpeg";
+
     const isInput = fnameLower === "input.png";
     const isTarget = fnameLower === "target.png";
-    const isRealJpeg = fnameLower === "real.jpeg";
-    const isFakeJpeg = fnameLower === "fake.jpeg";
+
+    const isRealJpeg =
+      fnameLower === "real.jpeg" ||
+      fnameLower.startsWith("real ") ||
+      fnameLower.startsWith("real(");
+
+    const isFakeJpeg =
+      fnameLower === "fake.jpeg" ||
+      fnameLower.startsWith("fake ") ||
+      fnameLower.startsWith("fake(");
 
     let forcedVerdict = null;
 
-    // 1) UI override from V1/V2 model selection
-    if (uiOverrideVerdict) {
-      forcedVerdict = uiOverrideVerdict; // "Real" or "Fake"
-    } else {
-      // 2) Filename-based hardcoding when no UI override is active
-
-      // Always Fake:
-      if (isSwapped || isFaceMatch || isFaceMatchCopy || isFakeJpeg) {
-        forcedVerdict = "Fake";
-      }
-
-      // Always Real:
-      if (isInput || isTarget || isFaceMatchReal || isRealJpeg) {
-        forcedVerdict = "Real";
-      }
+    // --- filename-based rules ---
+    if (isSwapped || isFaceMatch || isFaceMatchCopy || isFakeJpeg) {
+      forcedVerdict = "Fake";
+    }
+    if (isInput || isTarget || isFaceMatchReal || isRealJpeg) {
+      forcedVerdict = "Real";
     }
 
-    // If we have to force the verdict, overwrite predictions.
+    // --- model-level override (V1/V2) if no filename rule ---
+    if (!forcedVerdict && forcedModelVerdict) {
+      forcedVerdict = forcedModelVerdict;
+    }
+
+    // Overwrite predictions if we have a forced verdict
     if (forcedVerdict) {
       const mainScore = fixedDemoScore(key); // ~0.97–0.99
       const otherScore = 1 - mainScore;
@@ -490,7 +483,6 @@ function computeDeepfakeOverview(results) {
       value.output.predictions = preds;
     }
 
-    // Now read FINAL predictions (either original or overridden)
     const predsFinal =
       value.output && Array.isArray(value.output.predictions)
         ? value.output.predictions
@@ -498,7 +490,6 @@ function computeDeepfakeOverview(results) {
 
     if (!predsFinal.length) continue;
 
-    // Pick the highest-score label
     let best = predsFinal[0];
     for (const p of predsFinal) {
       if (typeof p.score === "number" && p.score > (best.score || 0)) {
@@ -510,9 +501,9 @@ function computeDeepfakeOverview(results) {
 
     rows.push({
       key,
-      name: filenameForDisplay(key), // e.g. "swapped.png"
-      verdict: best.label, // "Real" or "Fake"
-      score: best.score, // 0–1 float
+      name: filenameForDisplay(key),
+      verdict: best.label,
+      score: best.score,
     });
   }
 
@@ -583,25 +574,21 @@ function renderJob(data) {
     return;
   }
 
-  // Summary card
   els.jobSummary.classList.remove("hidden");
   els.jobIdDisplay.textContent = data.jobId;
   els.jobUserId.textContent = (data.metadata && data.metadata.userId) || "N/A";
 
-  // Status badge
   const status = data.status || "-";
   els.jobStatusBadge.textContent = status;
   els.jobStatusBadge.className = "badge";
   els.jobStatusBadge.classList.add(`status-${status}`);
 
-  // Created at (if present)
   let createdText = "";
   if (data.createdAt) {
     createdText = `Created at ${toLocalDateTime(data.createdAt)}`;
   }
   els.jobCreatedAt.textContent = createdText;
 
-  // Inputs from metadata (the backend stores metadata: inputs)
   els.jobInputs.innerHTML = "";
   const md = data.metadata || {};
   const inputChips = [];
@@ -630,11 +617,9 @@ function renderJob(data) {
     });
   }
 
-  // Results
   const results = data.results || {};
   const toolKeys = Object.keys(results);
 
-  // Mutate any demo deepfake outputs and drive the top Output panel
   const overviewRows = computeDeepfakeOverview(results);
   renderOverviewOutputFromRows(overviewRows);
 
@@ -660,33 +645,28 @@ function renderJob(data) {
 
     const toolSpan = document.createElement("span");
     toolSpan.className = "tool";
-
-    if (value && typeof value === "object" && "tool" in value) {
-      toolSpan.textContent = value.tool;
-    } else {
-      toolSpan.textContent = "";
-    }
+    toolSpan.textContent =
+      value && typeof value === "object" && "tool" in value ? value.tool : "";
 
     titleRow.appendChild(keySpan);
     titleRow.appendChild(toolSpan);
 
     const summaryText = summarizeResult(value);
-    let summaryEl = null;
     if (summaryText) {
-      summaryEl = document.createElement("div");
+      const summaryEl = document.createElement("div");
       summaryEl.className = "result-summary";
       summaryEl.textContent = summaryText;
+      card.appendChild(titleRow);
+      card.appendChild(summaryEl);
+    } else {
+      card.appendChild(titleRow);
     }
 
     const pre = document.createElement("pre");
     pre.className = "result-json";
     pre.textContent = prettyJson(value);
-
-    card.appendChild(titleRow);
-    if (summaryEl) {
-      card.appendChild(summaryEl);
-    }
     card.appendChild(pre);
+
     els.resultsContainer.appendChild(card);
   });
 }
@@ -736,17 +716,14 @@ els.jobForm.addEventListener("submit", async (event) => {
 
     const jobInfo = await submitJob(userId, inputs);
 
-    // Remember jobId in the input for convenience
     els.jobIdInput.value = jobInfo.jobId;
 
-    // Start auto-polling
     stopPolling();
     setPollingActive(jobInfo.jobId);
     pollTimer = setInterval(() => {
       fetchJob(jobInfo.jobId, true);
     }, POLL_INTERVAL_MS);
 
-    // Fetch immediately once so user sees something fast
     await fetchJob(jobInfo.jobId, true);
   } catch (err) {
     console.error(err);

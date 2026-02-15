@@ -51,41 +51,12 @@ const runtimeConfig = (() => {
   return config;
 })();
 
-const MEDIA_API_BASE = String(
-  runtimeConfig.API_URL ||
-    (window as any).API_URL ||
-    (import.meta as any).env?.VITE_MEDIA_API_BASE ||
-    DEFAULT_MEDIA_API_BASE
-).replace(/\/+$/, "");
-const MEDIA_API_KEY_RAW = String(
-  (import.meta as any).env?.VITE_MEDIA_API_KEY ||
-    runtimeConfig.API_KEY ||
-    (runtimeConfig as any).api_key_id ||
-    (runtimeConfig as any).apiKeyId ||
-    (window as any).API_KEY ||
-    (window as any).api_key_id ||
-    (window as any).apiKeyId ||
-    DEFAULT_MEDIA_API_KEY ||
-    ""
-).trim();
-const MEDIA_API_KEY = MEDIA_API_KEY_RAW
-  ? MEDIA_API_KEY_RAW.toLowerCase().startsWith("bearer ")
-    ? MEDIA_API_KEY_RAW
-    : `Bearer ${MEDIA_API_KEY_RAW}`
-  : "";
-const DOCUMENT_API_URL = String(
-  (import.meta as any).env?.VITE_DOCUMENT_API_URL ||
-    (runtimeConfig as any).DOCUMENT_API_URL ||
-    (window as any).DOCUMENT_API_URL ||
-    DEFAULT_DOCUMENT_API_URL
-).trim();
+const MEDIA_API_BASE = DEFAULT_MEDIA_API_BASE.replace(/\/+$/, "");
+const MEDIA_API_KEY_RAW = DEFAULT_MEDIA_API_KEY.trim();
+const MEDIA_API_KEY = MEDIA_API_KEY_RAW;
+const DOCUMENT_API_URL = DEFAULT_DOCUMENT_API_URL.trim();
 const DOCUMENT_API_BASE = DOCUMENT_API_URL.replace(/\/get-upload-url\/?$/, "");
-const DOCUMENT_API_KEY = String(
-  (import.meta as any).env?.VITE_DOCUMENT_API_KEY ||
-    (runtimeConfig as any).DOCUMENT_API_KEY ||
-    (window as any).DOCUMENT_API_KEY ||
-    ""
-).trim();
+const DOCUMENT_API_KEY = "";
 const ORIGIN_VERIFY = String(runtimeConfig.ORIGIN_VERIFY || (window as any).ORIGIN_VERIFY || "").trim();
 const ORIGIN_VERIFY_HEADER = String(
   runtimeConfig.ORIGIN_VERIFY_HEADER || "x-origin-verify"
@@ -98,7 +69,7 @@ const buildAuthHeaders = (
 ) => {
   const headers = { ...extra };
   if (apiKey) {
-    headers.Authorization = apiKey;
+    headers.Authorization = `Bearer ${apiKey}`;
     headers[apiKeyHeader] = apiKey;
   }
   if (ORIGIN_VERIFY) headers[ORIGIN_VERIFY_HEADER] = ORIGIN_VERIFY;

@@ -4,7 +4,7 @@ import path from "path";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 
 export default defineConfig({
-  base: "/Code-ConnectPREVIOUS-main/",
+  base: process.env.GITHUB_PAGES ? "/kyc-frontend/" : "/",
   plugins: [
     react(),
     runtimeErrorOverlay(),

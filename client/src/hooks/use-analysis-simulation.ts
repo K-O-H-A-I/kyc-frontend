@@ -17,6 +17,7 @@ type ParsedRow = {
 const DEFAULT_MEDIA_API_BASE = "https://d1hj0828nk37mv.cloudfront.net";
 const DEFAULT_MEDIA_API_KEY =
   "key_dcee18935059b2a7.sk_live_qOaXfTpuEpxX2OhRWIaeOLRMq3gBLy7e";
+const DEFAULT_MEDIA_API_KEY_HEADER = "x-api-key";
 const DEFAULT_DOCUMENT_API_URL =
   "https://371kvaeiy5.execute-api.ap-south-1.amazonaws.com/prod/get-upload-url";
 
@@ -90,9 +91,16 @@ const ORIGIN_VERIFY_HEADER = String(
   runtimeConfig.ORIGIN_VERIFY_HEADER || "x-origin-verify"
 ).trim();
 
-const buildAuthHeaders = (extra: Record<string, string> = {}, apiKey = MEDIA_API_KEY) => {
+const buildAuthHeaders = (
+  extra: Record<string, string> = {},
+  apiKey = MEDIA_API_KEY,
+  apiKeyHeader = DEFAULT_MEDIA_API_KEY_HEADER
+) => {
   const headers = { ...extra };
-  if (apiKey) headers.Authorization = apiKey;
+  if (apiKey) {
+    headers.Authorization = apiKey;
+    headers[apiKeyHeader] = apiKey;
+  }
   if (ORIGIN_VERIFY) headers[ORIGIN_VERIFY_HEADER] = ORIGIN_VERIFY;
   return headers;
 };
@@ -103,12 +111,14 @@ const getApiConfig = (toolType: ToolType) => {
       baseUrl: DOCUMENT_API_BASE,
       presignUrl: DOCUMENT_API_URL,
       apiKey: DOCUMENT_API_KEY,
+      apiKeyHeader: DEFAULT_MEDIA_API_KEY_HEADER,
     };
   }
   return {
     baseUrl: MEDIA_API_BASE,
     presignUrl: `${MEDIA_API_BASE.replace(/\/+$/, "")}/uploads/presign`,
     apiKey: MEDIA_API_KEY,
+    apiKeyHeader: DEFAULT_MEDIA_API_KEY_HEADER,
   };
 };
 
@@ -123,7 +133,8 @@ const requestPresign = async (
   file: File,
   jobId: string | undefined,
   presignUrl: string,
-  apiKey: string
+  apiKey: string,
+  apiKeyHeader: string
 ) => {
   const filename = file.name || `upload-${Date.now()}.bin`;
   const contentType = file.type || "application/octet-stream";
@@ -132,7 +143,7 @@ const requestPresign = async (
 
   const res = await fetch(presignUrl, {
     method: "POST",
-    headers: buildAuthHeaders({ "Content-Type": "application/json" }, apiKey),
+    headers: buildAuthHeaders({ "Content-Type": "application/json" }, apiKey, apiKeyHeader),
     body: JSON.stringify(payload),
   });
 
@@ -181,7 +192,8 @@ const uploadMediaList = async (
   files: File[],
   jobId: string | undefined,
   presignUrl: string,
-  apiKey: string
+  apiKey: string,
+  apiKeyHeader: string
 ) => {
   const keys: string[] = [];
   for (const file of files) {
@@ -189,7 +201,8 @@ const uploadMediaList = async (
       file,
       jobId,
       presignUrl,
-      apiKey
+      apiKey,
+      apiKeyHeader
     );
     await uploadToS3(file, uploadUrl, contentType, requiredHeaders);
     keys.push(key);
@@ -202,14 +215,15 @@ const submitJob = async (
   inputs: Record<string, unknown>,
   jobId: string | undefined,
   baseUrl: string,
-  apiKey: string
+  apiKey: string,
+  apiKeyHeader: string
 ) => {
   const payload: Record<string, unknown> = { userId: userId || "guest", inputs };
   if (jobId) payload.jobId = jobId;
 
   const res = await fetch(baseUrl.replace(/\/+$/, "") + "/jobs", {
     method: "POST",
-    headers: buildAuthHeaders({ "Content-Type": "application/json" }, apiKey),
+    headers: buildAuthHeaders({ "Content-Type": "application/json" }, apiKey, apiKeyHeader),
     body: JSON.stringify(payload),
   });
 
@@ -227,13 +241,18 @@ const submitJob = async (
   return data as any;
 };
 
-const fetchJob = async (jobId: string, baseUrl: string, apiKey: string) => {
+const fetchJob = async (
+  jobId: string,
+  baseUrl: string,
+  apiKey: string,
+  apiKeyHeader: string
+) => {
   const cleanBase = baseUrl.replace(/\/+$/, "");
   const url = `${cleanBase}/jobs/${encodeURIComponent(jobId)}`;
 
   const res = await fetch(url, {
     method: "GET",
-    headers: buildAuthHeaders({ Accept: "application/json" }, apiKey),
+    headers: buildAuthHeaders({ Accept: "application/json" }, apiKey, apiKeyHeader),
   });
 
   if (!res.ok) {
@@ -250,18 +269,19 @@ const pollJob = async (
   jobId: string,
   baseUrl: string,
   apiKey: string,
+  apiKeyHeader: string,
   maxAttempts = 20,
   intervalMs = 3000
 ) => {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const data = await fetchJob(jobId, baseUrl, apiKey);
+    const data = await fetchJob(jobId, baseUrl, apiKey, apiKeyHeader);
     const status = String(data.status || "").toUpperCase();
     if (status === "COMPLETED" || status === "FAILED") {
       return data;
     }
     await sleep(intervalMs);
   }
-  return fetchJob(jobId, baseUrl, apiKey);
+  return fetchJob(jobId, baseUrl, apiKey, apiKeyHeader);
 };
 
 const extractFilename = (rawKey: string) => {
@@ -615,9 +635,27 @@ export function useAnalysisSimulation() {
       audioFiles.forEach((file) => fileCacheRef.current.set(file.name.toLowerCase(), file));
 
       const [imageKeys, videoKeys, audioKeys] = await Promise.all([
-        uploadMediaList(imageFiles, jobId, apiConfig.presignUrl, apiConfig.apiKey),
-        uploadMediaList(videoFiles, jobId, apiConfig.presignUrl, apiConfig.apiKey),
-        uploadMediaList(audioFiles, jobId, apiConfig.presignUrl, apiConfig.apiKey),
+        uploadMediaList(
+          imageFiles,
+          jobId,
+          apiConfig.presignUrl,
+          apiConfig.apiKey,
+          apiConfig.apiKeyHeader
+        ),
+        uploadMediaList(
+          videoFiles,
+          jobId,
+          apiConfig.presignUrl,
+          apiConfig.apiKey,
+          apiConfig.apiKeyHeader
+        ),
+        uploadMediaList(
+          audioFiles,
+          jobId,
+          apiConfig.presignUrl,
+          apiConfig.apiKey,
+          apiConfig.apiKeyHeader
+        ),
       ]);
 
       const inputs: Record<string, unknown> = {
@@ -635,14 +673,16 @@ export function useAnalysisSimulation() {
         inputs,
         jobId,
         apiConfig.baseUrl,
-        apiConfig.apiKey
+        apiConfig.apiKey,
+        apiConfig.apiKeyHeader
       );
       setToastMessage("submitted");
 
       const jobData = await pollJob(
         jobInfo.jobId || jobId,
         apiConfig.baseUrl,
-        apiConfig.apiKey
+        apiConfig.apiKey,
+        apiConfig.apiKeyHeader
       );
       setToastMessage("sucess");
 

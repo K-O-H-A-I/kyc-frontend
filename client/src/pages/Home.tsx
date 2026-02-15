@@ -8,8 +8,10 @@ import { ToolType } from '@shared/schema';
 import { 
   FileText, 
   Search,
-  Globe, 
   Download,
+  Image as ImageIcon,
+  Film,
+  Mic,
   Loader2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -17,7 +19,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 const TABS: { id: ToolType; label: string; icon: any }[] = [
   { id: 'document', label: 'Document', icon: FileText },
-  { id: 'verification', label: 'Verification', icon: Globe },
+  { id: 'image', label: 'Image', icon: ImageIcon },
+  { id: 'video', label: 'Video', icon: Film },
+  { id: 'audio', label: 'Audio', icon: Mic },
 ];
 
 export default function Home() {
@@ -30,6 +34,8 @@ export default function Home() {
     runAnalysis, 
     updateDecision 
   } = useAnalysisSimulation();
+
+  const filteredResults = results.filter((result) => result.toolType === activeTool);
 
   const handleExport = () => {
     const exportData = {
@@ -74,7 +80,7 @@ export default function Home() {
                 Advanced Verification
               </h1>
               <p className="text-lg md:text-xl text-[var(--muted)] max-w-2xl leading-relaxed">
-                Analyze digital assets using AI-driven forensics, semantic analysis, and metadata verification.
+                Analyze digital assets using AI-driven forensics and semantic analysis.
               </p>
             </div>
             
@@ -147,13 +153,13 @@ export default function Home() {
           <div className="flex items-center justify-between mb-6">
             <h2 className="heading-2">Recent Analysis</h2>
             <span className="text-sm text-[var(--muted)]">
-              Showing {results.length} results
+              Showing {filteredResults.length} results
             </span>
           </div>
 
           <div className="space-y-4">
             <AnimatePresence>
-              {results.length === 0 ? (
+              {filteredResults.length === 0 ? (
                 <motion.div 
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
@@ -163,10 +169,10 @@ export default function Home() {
                     <Search className="w-8 h-8 text-[var(--muted)]" />
                   </div>
                   <h3 className="text-lg font-medium text-[var(--text)] mb-1">No analysis yet</h3>
-                  <p className="text-[var(--muted)]">Upload a file or paste text to begin verification.</p>
+                  <p className="text-[var(--muted)]">Upload a file or paste text to begin analysis.</p>
                 </motion.div>
               ) : (
-                results.map((result) => (
+                filteredResults.map((result) => (
                   <ResultRow 
                     key={result.id} 
                     result={result}

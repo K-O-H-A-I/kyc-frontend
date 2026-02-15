@@ -7,7 +7,7 @@ import { z } from "zod";
 export const analysisResults = pgTable("analysis_results", {
   id: serial("id").primaryKey(),
   filename: text("filename").notNull(),
-  toolType: text("tool_type").notNull(), // 'document', 'verification'
+  toolType: text("tool_type").notNull(), // 'document'
   riskScore: integer("risk_score").notNull(),
   priority: text("priority").notNull(), // 'LOW', 'MEDIUM', 'CRITICAL'
   decision: text("decision").notNull(), // 'APPROVE', 'REJECT', 'MANUAL_REVIEW'
@@ -23,15 +23,6 @@ export const analysisResults = pgTable("analysis_results", {
     decision: string;
     evidence: string[];
   }>(),
-  verification: jsonb("verification").$type<{
-    claimedLocation: string;
-    claimedEvent: string;
-    predictedLocation: string;
-    predictedEvent: string;
-    confidence: number;
-    matchStatus: "match" | "mismatch" | "insufficient";
-    reasons: string[];
-  }>(),
 });
 
 export const insertAnalysisResultSchema = createInsertSchema(analysisResults);
@@ -39,7 +30,7 @@ export const insertAnalysisResultSchema = createInsertSchema(analysisResults);
 export type AnalysisResult = typeof analysisResults.$inferSelect;
 export type InsertAnalysisResult = z.infer<typeof insertAnalysisResultSchema>;
 
-export type ToolType = 'document' | 'verification';
+export type ToolType = 'document' | 'image' | 'video' | 'audio';
 
 export type KpiStats = {
   total: number;

@@ -5,9 +5,10 @@ import {
   Check, 
   X, 
   File, 
-  Globe, 
-  MapPin, 
   ChevronRight,
+  Image as ImageIcon,
+  Film,
+  Mic
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -40,7 +41,9 @@ export function ResultRow({ result, onApprove, onReject, onManualReview }: Resul
     }
     switch (result.toolType) {
       case 'document': return <File className="w-5 h-5 text-[var(--accent)]" />;
-      case 'verification': return <Globe className="w-5 h-5 text-[var(--grad-orange-start)]" />;
+      case 'image': return <ImageIcon className="w-5 h-5 text-[var(--accent)]" />;
+      case 'video': return <Film className="w-5 h-5 text-[var(--accent)]" />;
+      case 'audio': return <Mic className="w-5 h-5 text-[var(--accent)]" />;
       default: return <File className="w-5 h-5" />;
     }
   };
@@ -133,121 +136,6 @@ export function ResultRow({ result, onApprove, onReject, onManualReview }: Resul
           >
             <div className="p-4 grid md:grid-cols-2 gap-6">
               <div className="space-y-6">
-                {result.toolType === 'verification' && result.metadata && (
-                  <div>
-                    <h5 className="text-sm font-semibold text-[var(--text)] mb-3 flex items-center gap-2">
-                      <Globe className="w-4 h-4 text-[var(--accent)]" />
-                      Section A: Metadata Analysis
-                    </h5>
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className={cn(
-                        "text-[10px] font-bold px-1.5 py-0.5 rounded",
-                        result.metadata.decision === "APPROVE" ? "bg-[var(--ok)]/10 text-[var(--ok)]" :
-                        result.metadata.decision === "REJECT" ? "bg-[var(--danger)]/10 text-[var(--danger)]" :
-                        "bg-[var(--grad-orange-start)]/10 text-[var(--grad-orange-start)]"
-                      )}>
-                        {result.metadata.decision}
-                      </span>
-                    </div>
-                    <ul className="space-y-1">
-                      {result.metadata.evidence.map((item, idx) => (
-                        <li key={idx} className="flex items-start gap-2 text-xs text-[var(--muted)]">
-                          <span className="mt-1.5 w-1 h-1 rounded-full bg-[var(--muted)]/30 shrink-0" />
-                          {item}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {result.toolType === 'verification' && result.verification && (
-                  <div>
-                    <h5 className="text-sm font-semibold text-[var(--text)] mb-3 flex items-center gap-2">
-                      <MapPin className="w-4 h-4 text-[var(--accent)]" />
-                      Claim vs Location Check
-                    </h5>
-                    <div className="space-y-3">
-                      <div className="grid grid-cols-2 gap-4 text-xs">
-                        <div>
-                          <span className="text-[var(--muted)]">Claimed Location:</span>
-                          <p className="text-[var(--text)] font-medium">
-                            {result.verification.claimedLocation || <span className="italic text-[var(--muted)]">Not provided</span>}
-                          </p>
-                        </div>
-                        <div>
-                          <span className="text-[var(--muted)]">Predicted Location:</span>
-                          <p className="text-[var(--text)] font-medium">
-                            {result.verification.predictedLocation} ({(result.verification.confidence * 100).toFixed(0)}%)
-                          </p>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4 text-xs">
-                        <div>
-                          <span className="text-[var(--muted)]">Claimed Event:</span>
-                          <p className="text-[var(--text)] font-medium">
-                            {result.verification.claimedEvent || <span className="italic text-[var(--muted)]">Not provided</span>}
-                          </p>
-                        </div>
-                        <div>
-                          <span className="text-[var(--muted)]">Predicted Event:</span>
-                          <p className="text-[var(--text)] font-medium">
-                            {result.verification.predictedEvent}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className={cn(
-                          "text-[10px] font-bold px-2 py-1 rounded uppercase tracking-wide",
-                          result.verification.matchStatus === "match" ? "bg-[var(--ok)]/15 text-[var(--ok)]" :
-                          result.verification.matchStatus === "mismatch" ? "bg-[var(--danger)]/15 text-[var(--danger)]" :
-                          "bg-[var(--grad-orange-start)]/15 text-[var(--grad-orange-start)]"
-                        )}>
-                          {result.verification.matchStatus === "match" ? "MATCH" :
-                           result.verification.matchStatus === "mismatch" ? "MISMATCH" : "INSUFFICIENT DATA"}
-                        </span>
-                      </div>
-                      <div>
-                        <h6 className="text-xs font-semibold text-[var(--text)] mb-2">Why</h6>
-                        <ul className="space-y-1">
-                          {result.verification.reasons.map((reason, idx) => (
-                            <li key={idx} className="flex items-start gap-2 text-xs text-[var(--muted)]">
-                              <span className="mt-1.5 w-1 h-1 rounded-full bg-[var(--muted)]/30 shrink-0" />
-                              {reason}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {result.toolType === 'verification' && result.geolocation && !result.verification && (
-                  <div>
-                    <h5 className="text-sm font-semibold text-[var(--text)] mb-3 flex items-center gap-2">
-                      <MapPin className="w-4 h-4 text-[var(--accent)]" />
-                      Section B: Geolocation Verification
-                    </h5>
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className={cn(
-                        "text-[10px] font-bold px-1.5 py-0.5 rounded",
-                        result.geolocation.decision === "APPROVE" ? "bg-[var(--ok)]/10 text-[var(--ok)]" :
-                        result.geolocation.decision === "REJECT" ? "bg-[var(--danger)]/10 text-[var(--danger)]" :
-                        "bg-[var(--grad-orange-start)]/10 text-[var(--grad-orange-start)]"
-                      )}>
-                        {result.geolocation.decision}
-                      </span>
-                    </div>
-                    <ul className="space-y-1">
-                      {result.geolocation.evidence.map((item, idx) => (
-                        <li key={idx} className="flex items-start gap-2 text-xs text-[var(--muted)]">
-                          <span className="mt-1.5 w-1 h-1 rounded-full bg-[var(--muted)]/30 shrink-0" />
-                          {item}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
                 {!result.metadata && (
                   <div>
                     <h5 className="text-sm font-semibold text-[var(--text)] mb-3 flex items-center gap-2">
@@ -270,7 +158,7 @@ export function ResultRow({ result, onApprove, onReject, onManualReview }: Resul
                 <div>
                    <h5 className="text-sm font-semibold text-[var(--text)] mb-2">Action Required</h5>
                    <p className="text-sm text-[var(--muted)] mb-4 italic">
-                     {result.decision === "MANUAL_REVIEW" ? "Analyst verification needed" : "No immediate action required"}
+                     {result.decision === "MANUAL_REVIEW" ? "Analyst review needed" : "No immediate action required"}
                    </p>
                 </div>
 

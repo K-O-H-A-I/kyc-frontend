@@ -10,7 +10,7 @@ export const api = {
       input: z.object({
         filename: z.string(),
         content: z.string().optional(),
-        toolType: z.enum(['document', 'verification']),
+        toolType: z.enum(['document']),
       }),
       responses: {
         200: z.array(z.custom<typeof analysisResults.$inferSelect>()),

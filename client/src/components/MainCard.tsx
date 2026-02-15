@@ -1,36 +1,43 @@
 import React, { useRef, useState } from 'react';
-import { UploadCloud, FileText, Globe } from 'lucide-react';
+import { UploadCloud, FileText, Image as ImageIcon, Film, Mic } from 'lucide-react';
 import { ToolType } from '@shared/schema';
 
 interface MainCardProps {
   activeTool: ToolType;
-  onAnalyze: (data: { filename?: string; content?: string; file?: File; claimedLocation?: string; claimedEvent?: string }) => void;
+  onAnalyze: (data: { files: File[]; imageModels?: string[] }) => void;
   isAnalyzing: boolean;
 }
 
 export function MainCard({ activeTool, onAnalyze, isAnalyzing }: MainCardProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [textInput, setTextInput] = useState("");
-  const [claimedLocation, setClaimedLocation] = useState("");
-  const [claimedEvent, setClaimedEvent] = useState("");
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [imageDeepfake, setImageDeepfake] = useState(true);
+  const [imageFaceMatch, setImageFaceMatch] = useState(false);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      onAnalyze({ 
-        filename: file.name, 
-        file,
-        ...(activeTool === 'verification' && { claimedLocation, claimedEvent })
-      });
-      // Reset input so same file can be selected again
-      e.target.value = '';
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    setSelectedFiles(files);
+    const imageModels = [];
+    if (activeTool === 'image') {
+      if (imageDeepfake) imageModels.push('image-deepfake');
+      if (imageFaceMatch) imageModels.push('image-facematch');
     }
+    onAnalyze({ files, imageModels: imageModels.length ? imageModels : undefined });
+    // Reset input so same file can be selected again
+    e.target.value = '';
   };
 
-  const handleTextAnalyze = () => {
-    if (!textInput.trim()) return;
-    onAnalyze({ content: textInput, filename: "text_snippet.txt" });
-    setTextInput("");
+  const acceptByTool = () => {
+    switch (activeTool) {
+      case 'image':
+      case 'document':
+        return "image/*";
+      case 'video':
+        return "video/*";
+      case 'audio':
+        return "audio/*";
+    }
   };
 
   // Render content based on tool type
@@ -46,49 +53,54 @@ export function MainCard({ activeTool, onAnalyze, isAnalyzing }: MainCardProps) 
             className="hidden" 
             ref={fileInputRef} 
             onChange={handleFileSelect}
+            accept={acceptByTool()}
+            multiple={activeTool === 'image' || activeTool === 'video' || activeTool === 'audio'}
           />
           <div className="w-8 h-8 rounded-full bg-[var(--accent)]/10 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform duration-300">
             <UploadCloud className="w-4 h-4 text-[var(--accent)]" />
           </div>
           <div className="flex-1 min-w-0">
             <span className="text-xs font-medium text-[var(--text)]">Drop file or click</span>
-            <span className="text-[10px] text-[var(--muted)] ml-2">PDF, JPG, PNG</span>
+            <span className="text-[10px] text-[var(--muted)] ml-2">
+              {activeTool === 'video'
+                ? "Video files"
+                : activeTool === 'audio'
+                  ? "Audio files"
+                  : "Image files"}
+            </span>
           </div>
           <button className="btn btn-secondary hover-elevate active-elevate-2 px-3 py-1 text-[10px] shrink-0">
-            Select
+            {isAnalyzing ? "Processing" : "Select"}
           </button>
         </div>
 
-        {activeTool === 'verification' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-[var(--panel)] rounded-[var(--radius)] border border-[var(--border)]">
-            <div>
-              <label className="block text-xs font-semibold text-[var(--text)] mb-2 uppercase tracking-wide">
-                Claimed Location
-              </label>
-              <input
-                type="text"
-                value={claimedLocation}
-                onChange={(e) => setClaimedLocation(e.target.value)}
-                onClick={(e) => e.stopPropagation()}
-                placeholder="e.g., India, New Delhi"
-                className="w-full px-3 py-2.5 bg-[var(--panel2)] border border-[var(--border)] rounded-[var(--radius)] text-sm text-[var(--text)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/50 focus:border-[var(--accent)] transition-all"
-                data-testid="input-claimed-location"
-              />
+        {activeTool === 'image' && (
+          <div className="bg-[var(--panel)] border border-[var(--border)] rounded-lg p-4 space-y-3">
+            <div className="text-xs font-semibold text-[var(--text)] uppercase tracking-wider">
+              Image Models
             </div>
-            <div>
-              <label className="block text-xs font-semibold text-[var(--text)] mb-2 uppercase tracking-wide">
-                Claimed Event <span className="text-[var(--muted)] font-normal">(optional)</span>
-              </label>
+            <label className="flex items-center gap-2 text-xs text-[var(--muted)]">
               <input
-                type="text"
-                value={claimedEvent}
-                onChange={(e) => setClaimedEvent(e.target.value)}
-                onClick={(e) => e.stopPropagation()}
-                placeholder="e.g., earthquake, flood, protest"
-                className="w-full px-3 py-2.5 bg-[var(--panel2)] border border-[var(--border)] rounded-[var(--radius)] text-sm text-[var(--text)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/50 focus:border-[var(--accent)] transition-all"
-                data-testid="input-claimed-event"
+                type="checkbox"
+                checked={imageDeepfake}
+                onChange={(e) => setImageDeepfake(e.target.checked)}
               />
-            </div>
+              Image deepfake
+            </label>
+            <label className="flex items-center gap-2 text-xs text-[var(--muted)]">
+              <input
+                type="checkbox"
+                checked={imageFaceMatch}
+                onChange={(e) => setImageFaceMatch(e.target.checked)}
+              />
+              Face match (requires target, input, swapped)
+            </label>
+          </div>
+        )}
+
+        {selectedFiles.length > 0 && (
+          <div className="text-xs text-[var(--muted)]">
+            Selected: {selectedFiles.map((file) => file.name).join(", ")}
           </div>
         )}
       </div>
@@ -98,8 +110,11 @@ export function MainCard({ activeTool, onAnalyze, isAnalyzing }: MainCardProps) 
   const getToolInfo = () => {
     switch (activeTool) {
       case 'document': return { title: "Document Forensics", icon: FileText, desc: "Analyze documents for digital alteration and manipulation." };
-      case 'verification': return { title: "Verification Suite", icon: Globe, desc: "Combined metadata extraction and geolocation analysis." };
+      case 'image': return { title: "Image Deepfake Detection", icon: ImageIcon, desc: "Analyze images for AI manipulation and identity mismatch." };
+      case 'video': return { title: "Video Liveness Check", icon: Film, desc: "Verify video authenticity and liveness signals." };
+      case 'audio': return { title: "Audio Authenticity", icon: Mic, desc: "Detect synthetic or altered audio samples." };
     }
+    return { title: "Verification", icon: FileText, desc: "Analyze uploaded files." };
   };
 
   const info = getToolInfo();

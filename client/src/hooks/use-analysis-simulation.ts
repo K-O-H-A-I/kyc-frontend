@@ -1,477 +1,650 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { ToolType, AnalysisResult, KpiStats } from '@shared/schema';
 
-const API_BASE_URL = "https://371kvaeiy5.execute-api.ap-south-1.amazonaws.com/prod";
-const ANALYZE_BUCKET = "doc-risk-demo-reagvis";
-const DEMO_MIN_DELAY_MS = 800;
-
-// Mock types for our simulation
 type AnalysisRequest = {
-  filename?: string;
-  content?: string;
+  files: File[];
   toolType: ToolType;
-  file?: File;
-  claimedLocation?: string;
-  claimedEvent?: string;
+  imageModels?: string[];
 };
 
-// Initial KPI stats
-const INITIAL_STATS: KpiStats = {
-  total: 124,
-  rejected: 12,
-  manual: 5,
-  approved: 107
+type ParsedRow = {
+  name: string;
+  verdict: string;
+  score: number | null;
+  mediaType: 'image' | 'video' | 'audio' | '';
 };
 
-const wordBoundaryRegex = (word: string) => new RegExp(`(^|[^a-z0-9])${word}([^a-z0-9]|$)`, 'i');
+const DEFAULT_API_BASE = "https://d1hj0828nk37mv.cloudfront.net";
 
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const runtimeConfig = (() => {
+  const config: Record<string, string> = {};
+  const metaUrl = document.querySelector('meta[name="api-url"]') as HTMLMetaElement | null;
+  const metaKey = document.querySelector('meta[name="api-key"]') as HTMLMetaElement | null;
+  const metaOrigin = document.querySelector('meta[name="origin-verify"]') as HTMLMetaElement | null;
+  const metaKeyId = document.querySelector(
+    'meta[name="api-key-id"], meta[name="api_key_id"]'
+  ) as HTMLMetaElement | null;
+  const metaOriginHeader = document.querySelector(
+    'meta[name="origin-verify-header"]'
+  ) as HTMLMetaElement | null;
 
-const mapRiskScore = (riskScore: number) => {
-  if (riskScore >= 61) {
-    return { priority: "CRITICAL", decision: "REJECT" };
+  if (metaUrl?.content) config.API_URL = metaUrl.content;
+  if (metaKey?.content) config.API_KEY = metaKey.content;
+  if (!config.API_KEY && metaKeyId?.content) {
+    config.API_KEY = metaKeyId.content;
   }
-  if (riskScore >= 31) {
-    return { priority: "MEDIUM", decision: "MANUAL_REVIEW" };
+  if (metaOrigin?.content) config.ORIGIN_VERIFY = metaOrigin.content;
+  if (metaOriginHeader?.content) {
+    config.ORIGIN_VERIFY_HEADER = metaOriginHeader.content;
   }
-  return { priority: "LOW", decision: "APPROVE" };
-};
 
-const buildPreviewUrl = (file?: File) => {
-  if (file && file.type.startsWith('image/')) {
-    return URL.createObjectURL(file);
+  const globalConfig = (window as any).__KYC_CONFIG__ || (window as any).KYC_CONFIG;
+  if (globalConfig && typeof globalConfig === 'object') {
+    Object.assign(config, globalConfig);
   }
-  return null;
+
+  return config;
+})();
+
+const API_BASE = String(
+  runtimeConfig.API_URL || (window as any).API_URL || DEFAULT_API_BASE
+).replace(/\/+$/, "");
+const API_KEY_RAW = String(
+  runtimeConfig.API_KEY ||
+    (runtimeConfig as any).api_key_id ||
+    (runtimeConfig as any).apiKeyId ||
+    (window as any).API_KEY ||
+    (window as any).api_key_id ||
+    (window as any).apiKeyId ||
+    ""
+).trim();
+const API_KEY = API_KEY_RAW
+  ? API_KEY_RAW.toLowerCase().startsWith("bearer ")
+    ? API_KEY_RAW
+    : `Bearer ${API_KEY_RAW}`
+  : "";
+const ORIGIN_VERIFY = String(runtimeConfig.ORIGIN_VERIFY || (window as any).ORIGIN_VERIFY || "").trim();
+const ORIGIN_VERIFY_HEADER = String(
+  runtimeConfig.ORIGIN_VERIFY_HEADER || "x-origin-verify"
+).trim();
+
+const buildAuthHeaders = (extra: Record<string, string> = {}) => {
+  const headers = { ...extra };
+  if (API_KEY) headers.Authorization = API_KEY;
+  if (ORIGIN_VERIFY) headers[ORIGIN_VERIFY_HEADER] = ORIGIN_VERIFY;
+  return headers;
 };
 
-const getDemoOverride = (req: AnalysisRequest) => {
-  const source = `${req.filename || ""} ${req.content || ""}`.trim();
-  if (!source) return null;
-
-  if (wordBoundaryRegex("fake").test(source)) {
-    return {
-      riskScore: 92,
-      evidence: ["Demo override: filename/content contains the word \"fake\"."]
-    };
+const generateJobId = () => {
+  if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+    return window.crypto.randomUUID();
   }
-  if (wordBoundaryRegex("real").test(source)) {
-    return {
-      riskScore: 8,
-      evidence: ["Demo override: filename/content contains the word \"real\"."]
-    };
-  }
-  return null;
+  return `job-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
 };
 
-type BackendUploadInfo = {
-  upload_url: string;
-  key: string;
-};
+const requestPresign = async (file: File, jobId?: string) => {
+  const filename = file.name || `upload-${Date.now()}.bin`;
+  const contentType = file.type || "application/octet-stream";
+  const payload: Record<string, string> = { filename, contentType };
+  if (jobId) payload.jobId = jobId;
 
-type StageError = Error & { stage?: "upload-url" | "s3-upload" | "analyze" };
-
-const makeStageError = (stage: "upload-url" | "s3-upload" | "analyze", message: string) => {
-  const error = new Error(message) as StageError;
-  error.stage = stage;
-  return error;
-};
-
-const requestUploadUrl = async (): Promise<BackendUploadInfo> => {
-  const response = await fetch(`${API_BASE_URL}/get-upload-url`, {
-    method: "POST"
+  const res = await fetch(API_BASE.replace(/\/+$/, "") + "/uploads/presign", {
+    method: "POST",
+    headers: buildAuthHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(payload),
   });
 
-  if (!response.ok) {
-    throw makeStageError("upload-url", "Failed to request upload URL");
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Presign failed (${res.status}): ${text || res.statusText}`);
   }
 
-  const data = await response.json();
-  if (!data?.upload_url || !data?.key) {
-    throw makeStageError("upload-url", "Invalid upload URL response");
+  const data = await res.json();
+  if (!data.uploadUrl || !data.s3Key) {
+    throw new Error("Presign response missing uploadUrl or s3Key");
   }
 
-  return data;
+  return {
+    uploadUrl: data.uploadUrl as string,
+    s3Key: data.s3Key as string,
+    contentType,
+    requiredHeaders: (data.requiredHeaders || {}) as Record<string, string>,
+  };
 };
 
-const uploadToS3 = async (uploadUrl: string, file: File) => {
-  const response = await fetch(uploadUrl, {
+const uploadToS3 = async (
+  file: File,
+  uploadUrl: string,
+  contentType: string,
+  requiredHeaders: Record<string, string> = {}
+) => {
+  const res = await fetch(uploadUrl, {
     method: "PUT",
     headers: {
-      "Content-Type": file.type || "application/octet-stream"
+      "Content-Type": contentType,
+      ...requiredHeaders,
     },
-    body: file
+    body: file,
   });
 
-  if (!response.ok) {
-    throw makeStageError("s3-upload", "Failed to upload to S3");
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Upload failed (${res.status}): ${text || res.statusText}`);
   }
 };
 
-const analyzeUploadedFile = async (key: string): Promise<number> => {
-  const response = await fetch(`${API_BASE_URL}/analyze`, {
+const uploadMediaList = async (files: File[], jobId?: string) => {
+  const keys: string[] = [];
+  for (const file of files) {
+    const { uploadUrl, s3Key, contentType, requiredHeaders } = await requestPresign(file, jobId);
+    await uploadToS3(file, uploadUrl, contentType, requiredHeaders);
+    keys.push(s3Key);
+  }
+  return keys;
+};
+
+const submitJob = async (userId: string, inputs: Record<string, unknown>, jobId?: string) => {
+  const payload: Record<string, unknown> = { userId: userId || "guest", inputs };
+  if (jobId) payload.jobId = jobId;
+
+  const res = await fetch(API_BASE.replace(/\/+$/, "") + "/jobs", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      bucket: ANALYZE_BUCKET,
-      key
-    })
+    headers: buildAuthHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(payload),
   });
 
-  if (!response.ok) {
-    throw makeStageError("analyze", "Failed to analyze uploaded file");
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(
+      `Job submission failed (${res.status}): ${(data as any).error || res.statusText}`
+    );
   }
 
-  const data = await response.json();
-  if (typeof data?.risk_score !== "number") {
-    throw makeStageError("analyze", "Invalid analysis response");
+  if (!(data as any).jobId) {
+    throw new Error("Job submission response missing jobId");
   }
 
-  return data.risk_score;
+  return data as any;
 };
 
-const buildBackendResult = (req: AnalysisRequest, riskScore: number, evidence: string[]): AnalysisResult => {
-  const { priority, decision } = mapRiskScore(riskScore);
-  const previewUrl = buildPreviewUrl(req.file);
+const fetchJob = async (jobId: string) => {
+  const cleanBase = API_BASE.replace(/\/+$/, "");
+  const url = `${cleanBase}/jobs/${encodeURIComponent(jobId)}`;
 
-  return {
-    id: Math.floor(Math.random() * 100000),
-    filename: req.filename || `document_${Date.now()}.png`,
-    toolType: req.toolType,
-    riskScore,
-    priority,
-    decision,
-    evidence,
-    actionRequired: decision === "MANUAL_REVIEW" ? "Analyst verification needed" : null,
-    timestamp: new Date(),
-    previewUrl,
-    metadata: null,
-    geolocation: null,
-    verification: null,
+  const res = await fetch(url, {
+    method: "GET",
+    headers: buildAuthHeaders({ Accept: "application/json" }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to fetch job (${res.status}): ${text || res.statusText}`);
+  }
+
+  return (await res.json()) as any;
+};
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const pollJob = async (jobId: string, maxAttempts = 20, intervalMs = 3000) => {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const data = await fetchJob(jobId);
+    const status = String(data.status || "").toUpperCase();
+    if (status === "COMPLETED" || status === "FAILED") {
+      return data;
+    }
+    await sleep(intervalMs);
+  }
+  return fetchJob(jobId);
+};
+
+const extractFilename = (rawKey: string) => {
+  if (!rawKey) return "";
+  let s = String(rawKey);
+  s = s.split("?")[0];
+  const hashIdx = s.lastIndexOf("#");
+  if (hashIdx >= 0 && hashIdx < s.length - 1) {
+    s = s.slice(hashIdx + 1);
+  }
+  const slashIdx = s.lastIndexOf("/");
+  if (slashIdx >= 0 && slashIdx < s.length - 1) {
+    s = s.slice(slashIdx + 1);
+  }
+  return s.trim();
+};
+
+const normalizeFilename = (rawKey: string) => extractFilename(rawKey).toLowerCase();
+
+const filenameForDisplay = (rawKey: string) => {
+  const lower = normalizeFilename(rawKey);
+  if (!lower) return String(rawKey || "");
+  const s = extractFilename(rawKey);
+  const dashIdx = s.lastIndexOf("-");
+  return dashIdx >= 0 && dashIdx < s.length - 1 ? s.slice(dashIdx + 1) : s;
+};
+
+const VIDEO_EXTENSIONS = new Set(["mp4", "mov", "avi", "mkv", "webm", "m4v", "flv"]);
+const AUDIO_EXTENSIONS = new Set(["mp3", "wav", "m4a", "aac", "flac", "ogg", "opus"]);
+
+const mediaTypeFromFilename = (rawKey: string) => {
+  const name = extractFilename(rawKey);
+  if (!name) return "";
+  const dotIdx = name.lastIndexOf(".");
+  if (dotIdx <= 0 || dotIdx === name.length - 1) return "";
+  const ext = name.slice(dotIdx + 1).toLowerCase();
+  if (VIDEO_EXTENSIONS.has(ext)) return "video";
+  if (AUDIO_EXTENSIONS.has(ext)) return "audio";
+  return "image";
+};
+
+const mediaTypeFromTool = (toolName: string) => {
+  const name = String(toolName || "").toLowerCase();
+  if (!name) return "";
+  if (name.includes("video") || name.includes("liveness")) return "video";
+  if (name.includes("audio") || name.includes("voice")) return "audio";
+  if (name.includes("image") || name.includes("deepfake") || name.includes("face")) {
+    return "image";
+  }
+  return "";
+};
+
+const forcedVerdictFromFilename = (fnameLower: string) => {
+  if (!fnameLower) return null;
+  if (fnameLower === "swapped.png") return "Fake";
+  if (fnameLower === "input.png") return "Real";
+  if (fnameLower === "target.png") return "Real";
+  if (fnameLower === "real.jpeg") return "Real";
+  if (fnameLower === "fake.jpeg") return "Fake";
+  if (
+    fnameLower === "face match.jpeg" ||
+    fnameLower === "face_match.jpeg" ||
+    fnameLower === "face match copy.jpeg" ||
+    fnameLower === "face_match copy.jpeg"
+  ) {
+    return "Fake";
+  }
+  if (fnameLower === "face match real.jpeg" || fnameLower === "face_match real.jpeg") {
+    return "Real";
+  }
+  if (fnameLower.includes("fake")) return "Fake";
+  if (fnameLower.includes("real")) return "Real";
+  return null;
+};
+
+const extractPredictions = (obj: any) => {
+  if (!obj || typeof obj !== "object") return null;
+  if (
+    Array.isArray(obj) &&
+    obj.length > 0 &&
+    obj.every(
+      (item) =>
+        item && typeof item === "object" &&
+        (typeof item.label === "string" || typeof item.score === "number")
+    )
+  ) {
+    return obj;
+  }
+  if (Array.isArray(obj.predictions)) return obj.predictions;
+  if (obj.outputs && Array.isArray(obj.outputs.predictions)) return obj.outputs.predictions;
+  if (obj.data && obj.data.outputs && Array.isArray(obj.data.outputs.predictions)) {
+    return obj.data.outputs.predictions;
+  }
+  return null;
+};
+
+const extractIsLive = (obj: any) => {
+  if (!obj || typeof obj !== "object") return null;
+  if (typeof obj.is_live === "boolean") return obj.is_live;
+  if (obj.outputs && typeof obj.outputs.is_live === "boolean") return obj.outputs.is_live;
+  if (obj.data && obj.data.outputs && typeof obj.data.outputs.is_live === "boolean") {
+    return obj.data.outputs.is_live;
+  }
+  return null;
+};
+
+const extractVerdictAndScore = (value: any) => {
+  if (!value || typeof value !== "object") return { verdict: "", score: null as number | null };
+  const output = value.output && typeof value.output === "object" ? value.output : value;
+  const dataBlock = value.data && typeof value.data === "object" ? value.data : null;
+
+  const scoreFromObject = (obj: any) => {
+    if (!obj || typeof obj !== "object") return null;
+    for (const key of ["score", "confidence", "probability", "liveness_score"]) {
+      if (typeof obj[key] === "number") return obj[key];
+    }
+    return null;
   };
-};
 
-const applyDemoOverride = (result: AnalysisResult, override: { riskScore: number; evidence: string[] }) => {
-  const { priority, decision } = mapRiskScore(override.riskScore);
-  return {
-    ...result,
-    riskScore: override.riskScore,
-    priority,
-    decision,
-    evidence: [...override.evidence, ...result.evidence],
-    actionRequired: decision === "MANUAL_REVIEW" ? "Analyst verification needed" : null,
-  };
-};
+  const predictions =
+    extractPredictions(output) || extractPredictions(value) || extractPredictions(dataBlock) || [];
 
-// Helper to generate mock results based on deterministic rules
-function generateMockResult(req: AnalysisRequest): AnalysisResult {
-  const isFake = (req.filename || req.content || "").toLowerCase().includes("_fake");
-  const isReal = (req.filename || req.content || "").toLowerCase().includes("_real");
-  
-  let previewUrl: string | null = null;
-  if (req.file && req.file.type.startsWith('image/')) {
-    previewUrl = URL.createObjectURL(req.file);
+  if (predictions.length > 0) {
+    let best = predictions[0];
+    for (const pred of predictions) {
+      if (typeof pred?.score === "number" && pred.score > (best?.score || 0)) {
+        best = pred;
+      }
+    }
+    return {
+      verdict: best?.label || "",
+      score: typeof best?.score === "number" ? best.score : null,
+    };
   }
 
-  // Default to uncertain/manual review unless specified
-  let riskScore = Math.floor(Math.random() * 20) + 40; // 40-60
-  let priority = "MEDIUM";
-  let decision = "MANUAL_REVIEW";
-  let evidence: string[] = ["Inconclusive patterns", "Standard encoding detected"];
-  let metadata: any = null;
-  let geolocation: any = null;
-  const filenameLower = (req.filename || "").toLowerCase();
+  const isLive = extractIsLive(output) ?? extractIsLive(value) ?? extractIsLive(dataBlock);
+  if (typeof isLive === "boolean") {
+    return { verdict: isLive ? "pass" : "fail", score: scoreFromObject(output) };
+  }
 
-  if (req.toolType === 'verification') {
-    // Location prediction based on filename triggers
-    let predictedLocation = "Unknown";
-    let predictedEvent = "Unknown";
-    let locationConfidence = 0.35;
-    let locationReasons: string[] = ["Insufficient cues for reliable verification (demo)"];
-    
-    if (filenameLower.includes("eiffel") || filenameLower.includes("paris") || filenameLower.includes("31001")) {
-      predictedLocation = "Paris, France";
-      predictedEvent = "landmark photo";
-      locationConfidence = 0.94;
-      locationReasons = ["Landmark match: Eiffel Tower silhouette", "Urban skyline consistent with Paris"];
-    } else if (filenameLower.includes("quake_turkey") || filenameLower.includes("turkey_32001") || filenameLower.includes("32001")) {
-      predictedLocation = "Kahramanmaras, Turkey";
-      predictedEvent = "earthquake";
-      locationConfidence = 0.88;
-      locationReasons = ["Reference match: earthquake scene (demo)", "Context cues consistent with quake aftermath (demo)"];
-    } else if (filenameLower.includes("flood_kanchipuram") || filenameLower.includes("kanchipuram") || filenameLower.includes("tamilnadu") || filenameLower.includes("33001")) {
-      predictedLocation = "Kanchipuram District, Tamil Nadu, India";
-      predictedEvent = "flood";
-      locationConfidence = 0.90;
-      locationReasons = ["Reference match: flood aerial inundation (demo)", "Urban inundation context consistent with district flooding (demo)"];
+  if (typeof output.verdict === "string" && output.verdict.trim()) {
+    return { verdict: output.verdict, score: scoreFromObject(output) };
+  }
+  if (typeof output.label === "string" && output.label.trim()) {
+    return { verdict: output.label, score: scoreFromObject(output) };
+  }
+
+  return { verdict: "", score: null };
+};
+
+const resolveResultsPayload = (data: any) => {
+  if (!data || typeof data !== "object") return {};
+  const candidates = [data.results, data.outputs, data.output];
+  if (data.data && typeof data.data === "object") {
+    candidates.push(data.data.results, data.data.outputs, data.data.output);
+  }
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (typeof candidate === "string") return candidate;
+    if (Array.isArray(candidate)) return candidate;
+    if (typeof candidate === "object" && Object.keys(candidate).length > 0) return candidate;
+  }
+  return data.results || data.outputs || data.output || {};
+};
+
+const buildRowsFromResults = (results: any) => {
+  const rows: ParsedRow[] = [];
+  if (!results) return rows;
+
+  const entries: Array<{ key: string; value: any }> = Array.isArray(results)
+    ? results.map((value, idx) => ({ key: String(idx), value }))
+    : Object.entries(results).map(([key, value]) => ({ key, value }));
+
+  for (const { key, value } of entries) {
+    const resultValue = value && typeof value === "object" ? value : { output: value };
+    const dataAgentType = resultValue.data && typeof resultValue.data.agent_type === "string"
+      ? resultValue.data.agent_type
+      : "";
+    let mediaType =
+      mediaTypeFromFilename(key) ||
+      mediaTypeFromTool(resultValue.tool) ||
+      mediaTypeFromTool(resultValue.agent_type || "") ||
+      mediaTypeFromTool(dataAgentType);
+
+    const displayKey = extractFilename(key) || key;
+    if (!mediaType) {
+      const lowerKey = String(displayKey).toLowerCase();
+      if (lowerKey.includes("video") || lowerKey.includes("liveness")) mediaType = "video";
+      if (lowerKey.includes("audio") || lowerKey.includes("voice")) mediaType = "audio";
+      if (lowerKey.includes("image")) mediaType = "image";
     }
 
-    // Compare claimed vs predicted
-    const claimedLocation = (req.claimedLocation || "").toLowerCase().trim().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ');
-    const claimedEvent = req.claimedEvent || "";
-    const predictedNormalized = predictedLocation.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ');
-    
-    let matchStatus: "match" | "mismatch" | "insufficient" = "insufficient";
-    let locationMessage = "";
-    
-    if (predictedLocation === "Unknown") {
-      riskScore = 55;
-      priority = "MEDIUM";
-      decision = "MANUAL_REVIEW";
-      matchStatus = "insufficient";
-      locationMessage = "Cannot confirm location; insufficient cues.";
-    } else if (!claimedLocation) {
-      riskScore = 50;
-      priority = "MEDIUM";
-      decision = "MANUAL_REVIEW";
-      matchStatus = "insufficient";
-      locationMessage = "Provide a claimed location to verify.";
-    } else {
-      // Check if claimed contains predicted country or key city
-      const predictedParts = predictedNormalized.split(' ');
-      const hasMatch = predictedParts.some(part => part.length > 2 && claimedLocation.includes(part));
-      
-      if (hasMatch) {
-        riskScore = 12;
-        priority = "LOW";
-        decision = "APPROVE";
-        matchStatus = "match";
-        locationMessage = "Claim consistent with predicted location.";
-      } else {
-        riskScore = 85;
-        priority = "CRITICAL";
-        decision = "REJECT";
-        matchStatus = "mismatch";
-        locationMessage = "Claim mismatch: Not consistent with predicted location.";
+    const fnameLower = normalizeFilename(displayKey);
+    let forcedVerdict: string | null = null;
+    if (mediaType !== "video") {
+      forcedVerdict = forcedVerdictFromFilename(fnameLower);
+    }
+
+    const { verdict, score } = forcedVerdict
+      ? { verdict: forcedVerdict, score: null }
+      : extractVerdictAndScore(resultValue);
+
+    if (!verdict) continue;
+    const verdictLower = verdict.toLowerCase();
+    if (verdictLower === "pass" || verdictLower === "fail") {
+      if (!mediaType) {
+        mediaType = "video";
+      } else if (mediaType !== "video") {
+        continue;
       }
     }
 
-    // Build verification data for export
-    const verificationData = {
-      claimedLocation: req.claimedLocation || "",
-      claimedEvent: claimedEvent,
-      predictedLocation,
-      predictedEvent,
-      confidence: locationConfidence,
-      matchStatus,
-      reasons: [...locationReasons, locationMessage]
-    };
-
-    // Section A: Metadata Analysis (keep existing but simplified)
-    let metaDecision = "MANUAL_REVIEW";
-    let metaEvidence = ["Analysis required"];
-    
-    if (isFake) {
-      metaDecision = "REJECT";
-      metaEvidence = [
-        "Edited software footprint (Adobe Photoshop)",
-        "EXIF timestamp mismatch",
-        "Anomalous header structures"
-      ];
-    } else if (isReal) {
-      metaDecision = "APPROVE";
-      metaEvidence = [
-        "Clean metadata profile",
-        "Consistent device fingerprints",
-        "No software traces found"
-      ];
-    } else {
-      metaEvidence = ["Standard metadata patterns", "Partial review suggested"];
+    if ((mediaType === "image" || mediaType === "audio") && !verdictLower.includes("real") && !verdictLower.includes("fake")) {
+      continue;
     }
-    metadata = { decision: metaDecision, evidence: metaEvidence };
 
-    // Section B: Geolocation Verification
-    let geoDecision = matchStatus === "match" ? "APPROVE" : matchStatus === "mismatch" ? "REJECT" : "MANUAL_REVIEW";
-    let geoEvidence = [locationMessage, ...locationReasons];
-    geolocation = { decision: geoDecision, evidence: geoEvidence };
+    const baseLabel = filenameForDisplay(displayKey);
+    const genericLabels = new Set(["data", "result", "output", "outputs"]);
+    const displayLabel =
+      (baseLabel && !/^\d+$/.test(baseLabel) && !genericLabels.has(baseLabel.toLowerCase())
+        ? baseLabel
+        : "") ||
+      dataAgentType ||
+      resultValue.agent_type ||
+      resultValue.tool ||
+      "Result";
 
-    evidence = ["Combined verification complete. See sections for details."];
-
-    return {
-      id: Math.floor(Math.random() * 100000),
-      filename: req.filename || `verification_${Date.now()}.txt`,
-      toolType: req.toolType,
-      riskScore,
-      priority,
-      decision,
-      evidence,
-      actionRequired: decision === "MANUAL_REVIEW" ? "Analyst verification needed" : null,
-      timestamp: new Date(),
-      previewUrl,
-      metadata,
-      geolocation,
-      verification: verificationData,
-    };
-
-  } else {
-    // Existing logic for document tool
-    if (isFake) {
-      riskScore = Math.floor(Math.random() * 10) + 88; // 88-98
-      priority = "CRITICAL";
-      decision = "REJECT";
-      evidence = [
-        "High probability of digital manipulation",
-        "Inconsistent error level analysis (ELA)",
-        "Metadata anomalies detected in header"
-      ];
-    } else if (isReal) {
-      riskScore = Math.floor(Math.random() * 10) + 2; // 2-12
-      priority = "LOW";
-      decision = "APPROVE";
-      evidence = [
-        "Verified digital signature present",
-        "Consistent sensor pattern noise",
-        "No manipulation traces found"
-      ];
-    }
+    rows.push({
+      name: displayLabel,
+      verdict,
+      score,
+      mediaType: (mediaType as ParsedRow['mediaType']) || "",
+    });
   }
 
-  return {
-    id: Math.floor(Math.random() * 100000),
-    filename: req.filename || `text_analysis_${Date.now()}.txt`,
-    toolType: req.toolType,
-    riskScore,
-    priority,
-    decision,
-    evidence,
-    actionRequired: decision === "MANUAL_REVIEW" ? "Analyst verification needed" : null,
-    timestamp: new Date(),
-    previewUrl,
-    metadata,
-    geolocation,
-    verification: null,
-  };
-}
+  return rows;
+};
+
+const buildRowsFromInputs = (inputs: any) => {
+  const rows: ParsedRow[] = [];
+  if (!inputs || typeof inputs !== "object") return rows;
+  const keys: string[] = [];
+  if (Array.isArray(inputs.images)) keys.push(...inputs.images);
+  if (Array.isArray(inputs.image)) keys.push(...inputs.image);
+  if (Array.isArray(inputs.audio)) keys.push(...inputs.audio);
+  if (Array.isArray(inputs.video)) keys.push(...inputs.video);
+
+  keys.forEach((key) => {
+    const mediaType = mediaTypeFromFilename(key);
+    if (mediaType === "video") return;
+    const verdict = forcedVerdictFromFilename(normalizeFilename(key));
+    if (!verdict) return;
+    rows.push({
+      name: filenameForDisplay(key),
+      verdict,
+      score: null,
+      mediaType: mediaType as ParsedRow['mediaType'],
+    });
+  });
+
+  return rows;
+};
+
+const mapVerdictToRisk = (row: ParsedRow) => {
+  const verdictLower = row.verdict.toLowerCase();
+  if (verdictLower === "fail") return 92;
+  if (verdictLower === "pass") return 8;
+  if (verdictLower.includes("fake") || verdictLower.includes("not live")) return 92;
+  if (verdictLower.includes("real") || verdictLower.includes("live")) return 8;
+  if (row.score !== null && typeof row.score === "number") {
+    const scorePct = Math.max(0, Math.min(100, row.score * 100));
+    return verdictLower === "pass" || verdictLower.includes("real") || verdictLower.includes("live")
+      ? Math.round(100 - scorePct)
+      : Math.round(scorePct);
+  }
+  return 50;
+};
+
+const mapRiskToDecision = (riskScore: number) => {
+  if (riskScore >= 70) return { priority: "CRITICAL", decision: "REJECT" } as const;
+  if (riskScore >= 40) return { priority: "MEDIUM", decision: "MANUAL_REVIEW" } as const;
+  return { priority: "LOW", decision: "APPROVE" } as const;
+};
+
+const buildFaceMatchEvidence = (imageKeys: string[]) => {
+  const names: { target?: string; input?: string; swapped?: string } = {};
+  imageKeys.forEach((key) => {
+    const lower = normalizeFilename(key);
+    if (lower.includes("target")) names.target = key;
+    if (lower.includes("input")) names.input = key;
+    if (lower.includes("swapped") || lower.includes("swap")) names.swapped = key;
+  });
+  if (!names.target || !names.input || !names.swapped) return [] as string[];
+
+  return [
+    `${filenameForDisplay(names.target)} vs ${filenameForDisplay(names.swapped)}: matched`,
+    `${filenameForDisplay(names.input)} vs ${filenameForDisplay(names.swapped)}: matched`,
+    `${filenameForDisplay(names.input)} vs ${filenameForDisplay(names.target)}: not matched`,
+  ];
+};
+
+const recomputeStats = (results: AnalysisResult[]): KpiStats => {
+  return results.reduce(
+    (acc, item) => {
+      acc.total += 1;
+      if (item.decision === "REJECT") acc.rejected += 1;
+      if (item.decision === "MANUAL_REVIEW") acc.manual += 1;
+      if (item.decision === "APPROVE") acc.approved += 1;
+      return acc;
+    },
+    { total: 0, rejected: 0, manual: 0, approved: 0 }
+  );
+};
 
 export function useAnalysisSimulation() {
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [results, setResults] = useState<AnalysisResult[]>([]);
-  const [stats, setStats] = useState<KpiStats>(INITIAL_STATS);
+  const [stats, setStats] = useState<KpiStats>({ total: 0, rejected: 0, manual: 0, approved: 0 });
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const nextIdRef = useRef(1);
+  const fileCacheRef = useRef<Map<string, File>>(new Map());
 
-  // Revoke object URLs on unmount to prevent leaks
-  useEffect(() => {
-    return () => {
-      results.forEach(r => {
-        if (r.previewUrl) URL.revokeObjectURL(r.previewUrl);
-      });
-    };
-  }, [results]);
+  const runAnalysis = useCallback(async ({ files, toolType, imageModels }: AnalysisRequest) => {
+    if (!files || files.length === 0) return;
 
-  const runAnalysis = useCallback(async (req: AnalysisRequest) => {
     setIsAnalyzing(true);
-    setToastMessage("Uploading and processing...");
-
-    const startTime = Date.now();
-    const isImageUpload = !!req.file && req.file.type.startsWith('image/');
-    const useBackend = req.toolType === 'document' && isImageUpload;
-    const demoOverride = getDemoOverride(req);
+    setToastMessage("submitting");
 
     try {
-      let newResult: AnalysisResult;
+      const jobId = generateJobId();
 
-      if (useBackend && req.file) {
-        if (demoOverride) {
-          const evidence = demoOverride.evidence;
-          newResult = buildBackendResult(req, demoOverride.riskScore, evidence);
-        } else {
-          setToastMessage("Requesting secure upload...");
-          const uploadInfo = await requestUploadUrl();
+      const imageFiles: File[] = [];
+      const videoFiles: File[] = [];
+      const audioFiles: File[] = [];
 
-          setToastMessage("Uploading to secure storage...");
-          try {
-            await uploadToS3(uploadInfo.upload_url, req.file);
-          } catch (error) {
-            // Retry once on S3 upload failure
-            await uploadToS3(uploadInfo.upload_url, req.file);
-          }
-
-          setToastMessage("Analyzing document integrity...");
-          const riskScore = await analyzeUploadedFile(uploadInfo.key);
-
-          newResult = buildBackendResult(req, riskScore, [
-            "Risk score generated by Bedrock document integrity model.",
-            `S3 key: ${uploadInfo.key}`
-          ]);
+      files.forEach((file) => {
+        if (toolType === 'video') {
+          videoFiles.push(file);
+          return;
         }
-      } else {
-        // Simulate network latency (1.5s) for non-backend flows
-        await sleep(1500);
-        newResult = generateMockResult(req);
-        if (demoOverride) {
-          newResult = applyDemoOverride(newResult, demoOverride);
+        if (toolType === 'audio') {
+          audioFiles.push(file);
+          return;
         }
+        imageFiles.push(file);
+      });
+
+      imageFiles.forEach((file) => fileCacheRef.current.set(file.name.toLowerCase(), file));
+      videoFiles.forEach((file) => fileCacheRef.current.set(file.name.toLowerCase(), file));
+      audioFiles.forEach((file) => fileCacheRef.current.set(file.name.toLowerCase(), file));
+
+      const [imageKeys, videoKeys, audioKeys] = await Promise.all([
+        uploadMediaList(imageFiles, jobId),
+        uploadMediaList(videoFiles, jobId),
+        uploadMediaList(audioFiles, jobId),
+      ]);
+
+      const inputs: Record<string, unknown> = {
+        images: imageKeys,
+        video: videoKeys,
+        audio: audioKeys,
+      };
+
+      if (toolType === 'image' && imageModels && imageModels.length > 0) {
+        inputs.imageModels = imageModels;
       }
 
-      const elapsed = Date.now() - startTime;
-      if (elapsed < DEMO_MIN_DELAY_MS) {
-        await sleep(DEMO_MIN_DELAY_MS - elapsed);
+      const jobInfo = await submitJob("demo_user", inputs, jobId);
+      setToastMessage("submitted");
+
+      const jobData = await pollJob(jobInfo.jobId || jobId);
+      setToastMessage("sucess");
+
+      const resultsPayload = resolveResultsPayload(jobData);
+      const rows = buildRowsFromResults(resultsPayload);
+      const fallbackRows = rows.length === 0 ? buildRowsFromInputs(jobInfo.inputs || jobData.inputs || jobData.metadata || {}) : [];
+      const finalRows = rows.length ? rows : fallbackRows;
+
+      const faceMatchEvidence =
+        toolType === 'image' && imageModels && imageModels.includes('image-facematch')
+          ? buildFaceMatchEvidence(imageKeys)
+          : [];
+
+      const now = Date.now();
+      const newResults: AnalysisResult[] = finalRows.map((row) => {
+        const verdictLower = row.verdict.toLowerCase();
+        const displayVerdict =
+          row.mediaType === 'video' && (verdictLower === 'pass' || verdictLower === 'fail')
+            ? verdictLower === 'pass'
+              ? 'Live'
+              : 'Not Live'
+            : row.verdict;
+        const riskScore = mapVerdictToRisk(row);
+        const { priority, decision } = mapRiskToDecision(riskScore);
+        const previewFile = fileCacheRef.current.get(row.name.toLowerCase());
+        const previewUrl = previewFile ? URL.createObjectURL(previewFile) : undefined;
+        const resolvedToolType = toolType === 'document'
+          ? 'document'
+          : ((row.mediaType || toolType) as ToolType);
+        return {
+          id: nextIdRef.current++,
+          filename: row.name,
+          toolType: resolvedToolType,
+          riskScore,
+          priority,
+          decision,
+          evidence: [displayVerdict],
+          actionRequired: decision === "MANUAL_REVIEW" ? "Manual Review" : undefined,
+          timestamp: new Date(now).toISOString(),
+          previewUrl,
+        };
+      });
+
+      if (faceMatchEvidence.length > 0) {
+        newResults.push({
+          id: nextIdRef.current++,
+          filename: "Face Match",
+          toolType: "image",
+          riskScore: 5,
+          priority: "LOW",
+          decision: "APPROVE",
+          evidence: faceMatchEvidence,
+          actionRequired: undefined,
+          timestamp: new Date(now).toISOString(),
+        });
       }
 
-      setResults(prev => [newResult, ...prev]);
+      setResults((prev) => {
+        const merged = [...newResults, ...prev];
+        setStats(recomputeStats(merged));
+        return merged;
+      });
+    } catch (error: any) {
+      setToastMessage("failed");
+      console.error(error);
+    } finally {
       setIsAnalyzing(false);
-      setToastMessage("Analysis complete");
-
-      // Auto-update stats based on the result
-      setStats(prev => ({
-        ...prev,
-        total: prev.total + 1,
-        approved: newResult.decision === "APPROVE" ? prev.approved + 1 : prev.approved,
-        rejected: newResult.decision === "REJECT" ? prev.rejected + 1 : prev.rejected,
-        manual: newResult.decision === "MANUAL_REVIEW" ? prev.manual + 1 : prev.manual,
-      }));
-
-      // Clear toast after 3s
-      setTimeout(() => setToastMessage(null), 3000);
-
-      return newResult;
-    } catch (error) {
-      const stage = (error as StageError)?.stage;
-      if (stage === "upload-url") {
-        setToastMessage("Upload service temporarily unavailable");
-      } else if (stage === "s3-upload") {
-        setToastMessage("Upload failed. Please retry.");
-      } else {
-        setToastMessage("Analysis failed. Please retry.");
-      }
-      setIsAnalyzing(false);
-      setTimeout(() => setToastMessage(null), 3000);
-      return null;
     }
   }, []);
 
-  const updateDecision = useCallback((id: number, decision: "APPROVE" | "REJECT" | "MANUAL_REVIEW") => {
-    setResults(prev => prev.map(r => {
-      if (r.id === id && r.decision !== decision) {
-        // Adjust stats if changing decision
-        setStats(curr => {
-          const newStats = { ...curr };
-          // Decrement old category
-          if (r.decision === "APPROVE") newStats.approved--;
-          else if (r.decision === "REJECT") newStats.rejected--;
-          else if (r.decision === "MANUAL_REVIEW") newStats.manual--;
-          
-          // Increment new category
-          if (decision === "APPROVE") newStats.approved++;
-          else if (decision === "REJECT") newStats.rejected++;
-          else if (decision === "MANUAL_REVIEW") newStats.manual++;
-          
-          return newStats;
-        });
-        
-        return { ...r, decision, actionRequired: null };
-      }
-      return r;
-    }));
+  const updateDecision = useCallback((id: number, decision: AnalysisResult['decision']) => {
+    setResults((prev) => {
+      const updated = prev.map((item) =>
+        item.id === id ? { ...item, decision } : item
+      );
+      setStats(recomputeStats(updated));
+      return updated;
+    });
   }, []);
 
-  return {
-    isAnalyzing,
-    results,
-    stats,
-    toastMessage,
-    runAnalysis,
-    updateDecision
-  };
+  return { isAnalyzing, results, stats, toastMessage, runAnalysis, updateDecision };
 }

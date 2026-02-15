@@ -51,9 +51,30 @@ const runtimeConfig = (() => {
   return config;
 })();
 
-const MEDIA_API_BASE = DEFAULT_MEDIA_API_BASE.replace(/\/+$/, "");
-const MEDIA_API_KEY_RAW = DEFAULT_MEDIA_API_KEY.trim();
-const MEDIA_API_KEY = MEDIA_API_KEY_RAW;
+const normalizeApiKey = (value: string) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return raw.toLowerCase().startsWith("bearer ") ? raw.slice(7).trim() : raw;
+};
+
+const MEDIA_API_BASE = String(
+  runtimeConfig.API_URL ||
+    runtimeConfig.api_url ||
+    runtimeConfig.apiUrl ||
+    (window as any).API_URL ||
+    (window as any).api_url ||
+    DEFAULT_MEDIA_API_BASE
+).replace(/\/+$/, "");
+const MEDIA_API_KEY_RAW = String(
+  runtimeConfig.API_KEY ||
+    runtimeConfig.api_key_id ||
+    runtimeConfig.apiKeyId ||
+    (window as any).API_KEY ||
+    (window as any).api_key_id ||
+    (window as any).apiKeyId ||
+    DEFAULT_MEDIA_API_KEY
+);
+const MEDIA_API_KEY = normalizeApiKey(MEDIA_API_KEY_RAW);
 const DOCUMENT_API_URL = DEFAULT_DOCUMENT_UPLOAD_URL.trim();
 const DOCUMENT_API_BASE = DOCUMENT_API_URL.replace(/\/get-upload-url\/?$/, "");
 const DOCUMENT_ANALYZE_URL = `${DOCUMENT_API_BASE}/analyze`;

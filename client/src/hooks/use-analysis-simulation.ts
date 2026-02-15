@@ -13,6 +13,7 @@ type ParsedRow = {
   score: number | null;
   mediaType: 'image' | 'video' | 'audio' | '';
   sourceKey?: string;
+  sourceTool?: string;
 };
 
 const DEFAULT_MEDIA_API_BASE = "https://d1hj0828nk37mv.cloudfront.net";
@@ -330,6 +331,79 @@ const fetchJob = async (
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const loadImageFromFile = (file: File) =>
+  new Promise<HTMLImageElement>((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(img);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Failed to load image"));
+    };
+    img.src = objectUrl;
+  });
+
+const collectFaceMatchFiles = (files: File[]) => {
+  const matches: { target?: File; input?: File; swapped?: File } = {};
+  files.forEach((file) => {
+    const name = file.name.toLowerCase();
+    if (name.includes("swapped") || name.includes("swap")) matches.swapped = file;
+    if (name.includes("target")) matches.target = file;
+    if (name.includes("input")) matches.input = file;
+  });
+
+  const ordered: Array<{ file: File; label: string }> = [];
+  if (matches.target) ordered.push({ file: matches.target, label: "Target" });
+  if (matches.input) ordered.push({ file: matches.input, label: "Input" });
+  if (matches.swapped) ordered.push({ file: matches.swapped, label: "Swapped" });
+
+  if (ordered.length > 0) return ordered.slice(0, 3);
+
+  return files.slice(0, 3).map((file) => ({ file, label: file.name }));
+};
+
+const buildFaceMatchPreview = async (
+  items: Array<{ file: File; label: string }>
+) => {
+  if (!items.length) return undefined;
+  const images = await Promise.all(items.map((item) => loadImageFromFile(item.file)));
+  const tileWidth = 180;
+  const tileHeight = 120;
+  const labelHeight = 18;
+  const gap = 10;
+  const totalWidth = images.length * tileWidth + (images.length - 1) * gap;
+  const totalHeight = tileHeight + labelHeight;
+  const canvas = document.createElement("canvas");
+  canvas.width = totalWidth;
+  canvas.height = totalHeight;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return undefined;
+
+  ctx.fillStyle = "#0b0f1a";
+  ctx.fillRect(0, 0, totalWidth, totalHeight);
+  ctx.font = "12px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#e5e7eb";
+
+  images.forEach((img, idx) => {
+    const x = idx * (tileWidth + gap);
+    const y = 0;
+    const scale = Math.max(tileWidth / img.width, tileHeight / img.height);
+    const drawWidth = img.width * scale;
+    const drawHeight = img.height * scale;
+    const offsetX = x + (tileWidth - drawWidth) / 2;
+    const offsetY = y + (tileHeight - drawHeight) / 2;
+    ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
+    ctx.fillText(items[idx]?.label || "", x + tileWidth / 2, tileHeight + labelHeight / 2);
+  });
+
+  return canvas.toDataURL("image/jpeg", 0.86);
+};
+
 const pollJob = async (
   jobId: string,
   baseUrl: string,
@@ -542,6 +616,9 @@ const buildRowsFromResults = (results: any) => {
         : resultValue.data && resultValue.data.data && typeof resultValue.data.data.agent_type === "string"
           ? resultValue.data.data.agent_type
           : "";
+    const sourceTool = String(
+      resultValue.tool || resultValue.type || resultValue.agent_type || dataAgentType || ""
+    );
     let mediaType =
       mediaTypeFromFilename(key) ||
       mediaTypeFromTool(resultValue.tool) ||
@@ -558,6 +635,14 @@ const buildRowsFromResults = (results: any) => {
     }
 
     const fnameLower = normalizeFilename(displayKey);
+    const filenameHasRealFake =
+      fnameLower.includes("real") ||
+      fnameLower.includes("fake") ||
+      (mediaType === "image" &&
+        (fnameLower.includes("swapped") ||
+          fnameLower.includes("swap") ||
+          fnameLower.includes("target") ||
+          fnameLower.includes("input")));
     let forcedVerdict: string | null = null;
     if (mediaType !== "video") {
       forcedVerdict = forcedVerdictFromFilename(fnameLower, mediaType || "image");
@@ -569,6 +654,9 @@ const buildRowsFromResults = (results: any) => {
 
     if (!verdict) continue;
     const verdictLower = verdict.toLowerCase();
+    const isFaceMatch =
+      sourceTool.toLowerCase().includes("facematch") ||
+      sourceTool.toLowerCase().includes("face match");
     if (verdictLower === "pass" || verdictLower === "fail") {
       if (!mediaType) {
         mediaType = "video";
@@ -577,7 +665,13 @@ const buildRowsFromResults = (results: any) => {
       }
     }
 
-    if ((mediaType === "image" || mediaType === "audio") && !verdictLower.includes("real") && !verdictLower.includes("fake")) {
+    if (
+      (mediaType === "image" || mediaType === "audio") &&
+      filenameHasRealFake &&
+      !verdictLower.includes("real") &&
+      !verdictLower.includes("fake") &&
+      !isFaceMatch
+    ) {
       continue;
     }
 
@@ -599,6 +693,7 @@ const buildRowsFromResults = (results: any) => {
       score,
       mediaType: (mediaType as ParsedRow['mediaType']) || "",
       sourceKey: String(key),
+      sourceTool,
     });
   }
 
@@ -628,6 +723,11 @@ const assignSourceKeys = (rows: ParsedRow[], inputs: any) => {
     }
     return sourceKey ? { ...row, sourceKey } : row;
   });
+};
+
+const isFaceMatchRow = (row: ParsedRow) => {
+  const label = `${row.sourceTool || ""} ${row.name || ""}`.toLowerCase();
+  return label.includes("facematch") || label.includes("face match");
 };
 
 const buildRowsFromInputs = (inputs: any) => {
@@ -706,16 +806,7 @@ const buildFaceMatchEvidence = (imageKeys: string[]) => {
     if (lower.includes("swapped") || lower.includes("swap")) names.swapped = key;
   });
   if (!names.swapped || (!names.target && !names.input)) {
-    const missing = [
-      !names.swapped ? "swapped" : "",
-      !names.target && !names.input ? "target/input" : "",
-    ]
-      .filter(Boolean)
-      .join(", ");
-    return {
-      success: false,
-      evidence: [`Face match: Not successful (missing ${missing})`],
-    };
+    return null;
   }
 
   const parts = [
@@ -911,9 +1002,16 @@ export function useAnalysisSimulation() {
         toolType === 'image' && imageModels && imageModels.includes('image-facematch')
           ? buildFaceMatchEvidence(imageKeys)
           : null;
+      const faceMatchPreviewUrl =
+        toolType === 'image' && imageModels && imageModels.includes('image-facematch')
+          ? await buildFaceMatchPreview(collectFaceMatchFiles(imageFiles))
+          : undefined;
 
       const now = Date.now();
-      const effectiveRows = wantsFaceMatchOnly ? [] : finalRows;
+      let effectiveRows = wantsFaceMatchOnly ? finalRows.filter(isFaceMatchRow) : finalRows;
+      if (faceMatchInfo) {
+        effectiveRows = effectiveRows.filter((row) => !isFaceMatchRow(row));
+      }
       const newResults: AnalysisResult[] = effectiveRows.map((row) => {
         const verdictLower = row.verdict.toLowerCase();
         const displayVerdict =
@@ -924,8 +1022,14 @@ export function useAnalysisSimulation() {
             : row.verdict;
         const riskScore = mapVerdictToRisk(row);
         const { priority, decision } = mapRiskToDecision(riskScore);
+        const isRowFaceMatch = isFaceMatchRow(row);
         const previewFile = findPreviewFile(row, fileCacheRef.current);
-        const previewUrl = previewFile ? URL.createObjectURL(previewFile) : undefined;
+        const previewUrl =
+          isRowFaceMatch && faceMatchPreviewUrl
+            ? faceMatchPreviewUrl
+            : previewFile
+              ? URL.createObjectURL(previewFile)
+              : undefined;
         const resolvedToolType = toolType === 'document'
           ? 'document'
           : ((row.mediaType || toolType) as ToolType);
@@ -944,7 +1048,7 @@ export function useAnalysisSimulation() {
       });
 
       if (faceMatchInfo) {
-        const faceMatchScore = faceMatchInfo.success ? 5 : 50;
+        const faceMatchScore = 5;
         const faceMatchDecision = mapRiskToDecision(faceMatchScore);
         newResults.push({
           id: nextIdRef.current++,
@@ -956,6 +1060,7 @@ export function useAnalysisSimulation() {
           evidence: faceMatchInfo.evidence,
           actionRequired: undefined,
           timestamp: new Date(now).toISOString(),
+          previewUrl: faceMatchPreviewUrl,
         });
       }
 

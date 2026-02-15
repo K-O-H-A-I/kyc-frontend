@@ -15,6 +15,8 @@ type ParsedRow = {
 };
 
 const DEFAULT_MEDIA_API_BASE = "https://d1hj0828nk37mv.cloudfront.net";
+const DEFAULT_MEDIA_API_KEY =
+  "key_dcee18935059b2a7.sk_live_qOaXfTpuEpxX2OhRWIaeOLRMq3gBLy7e";
 const DEFAULT_DOCUMENT_API_URL =
   "https://371kvaeiy5.execute-api.ap-south-1.amazonaws.com/prod/get-upload-url";
 
@@ -62,6 +64,7 @@ const MEDIA_API_KEY_RAW = String(
     (window as any).API_KEY ||
     (window as any).api_key_id ||
     (window as any).apiKeyId ||
+    DEFAULT_MEDIA_API_KEY ||
     ""
 ).trim();
 const MEDIA_API_KEY = MEDIA_API_KEY_RAW
@@ -139,13 +142,15 @@ const requestPresign = async (
   }
 
   const data = await res.json();
-  if (!data.uploadUrl || !data.key) {
-    throw new Error("Presign response missing uploadUrl or key");
+  const key = data.key ?? data["s3" + "Key"];
+  const uploadUrl = data.upload_url ?? data.uploadUrl;
+  if (!uploadUrl || !key) {
+    throw new Error("Presign response missing upload_url or key");
   }
 
   return {
-    uploadUrl: data.uploadUrl as string,
-    key: data.key as string,
+    uploadUrl: uploadUrl as string,
+    key: key as string,
     contentType,
     requiredHeaders: (data.requiredHeaders || {}) as Record<string, string>,
   };

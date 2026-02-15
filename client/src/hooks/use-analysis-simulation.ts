@@ -51,10 +51,10 @@ const runtimeConfig = (() => {
   return config;
 })();
 
-const normalizeApiKey = (value: string) => {
+const formatBearerKey = (value: string) => {
   const raw = String(value || "").trim();
   if (!raw) return "";
-  return raw.toLowerCase().startsWith("bearer ") ? raw.slice(7).trim() : raw;
+  return raw.toLowerCase().startsWith("bearer ") ? raw : `Bearer ${raw}`;
 };
 
 const MEDIA_API_BASE = String(
@@ -74,7 +74,7 @@ const MEDIA_API_KEY_RAW = String(
     (window as any).apiKeyId ||
     DEFAULT_MEDIA_API_KEY
 );
-const MEDIA_API_KEY = normalizeApiKey(MEDIA_API_KEY_RAW);
+const MEDIA_API_KEY = formatBearerKey(MEDIA_API_KEY_RAW);
 const DOCUMENT_API_URL = DEFAULT_DOCUMENT_UPLOAD_URL.trim();
 const DOCUMENT_API_BASE = DOCUMENT_API_URL.replace(/\/get-upload-url\/?$/, "");
 const DOCUMENT_ANALYZE_URL = `${DOCUMENT_API_BASE}/analyze`;
@@ -92,8 +92,10 @@ const buildAuthHeaders = (
 ) => {
   const headers = { ...extra };
   if (apiKey) {
-    headers.Authorization = `Bearer ${apiKey}`;
-    headers[apiKeyHeader] = apiKey;
+    headers.Authorization = apiKey;
+    if (apiKeyHeader) {
+      headers[apiKeyHeader] = apiKey;
+    }
   }
   if (ORIGIN_VERIFY) headers[ORIGIN_VERIFY_HEADER] = ORIGIN_VERIFY;
   return headers;
@@ -174,7 +176,7 @@ const getApiConfig = (toolType: ToolType) => {
     baseUrl: MEDIA_API_BASE,
     presignUrl: `${MEDIA_API_BASE.replace(/\/+$/, "")}/uploads/presign`,
     apiKey: MEDIA_API_KEY,
-    apiKeyHeader: DEFAULT_MEDIA_API_KEY_HEADER,
+    apiKeyHeader: "",
   };
 };
 
@@ -197,7 +199,6 @@ const requestPresign = async (
   const payload: Record<string, string> = { filename, contentType };
   if (jobId) {
     payload.jobId = jobId;
-    payload.job_id = jobId;
   }
 
   const res = await fetch(presignUrl, {

@@ -28,7 +28,7 @@ export function ResultRow({ result, onApprove, onReject, onManualReview }: Resul
   const riskLevel = result.riskScore >= 70 ? 'CRITICAL' : result.riskScore >= 40 ? 'MEDIUM' : 'LOW';
   const isMediumRisk = riskLevel === 'MEDIUM';
 
-  const hasPreview = !!result.previewUrl;
+  const hasPreview = !!result.previewUrl || !!(result.previewUrls && result.previewUrls.length > 0);
 
   const renderSmallPreview = () => {
     if (result.previewUrls && result.previewUrls.length > 0) {
@@ -124,7 +124,6 @@ export function ResultRow({ result, onApprove, onReject, onManualReview }: Resul
         </div>
       );
     } else if (result.toolType === 'video') {
-    if (result.toolType === 'video') {
       content = (
         <video
           src={result.previewUrl}

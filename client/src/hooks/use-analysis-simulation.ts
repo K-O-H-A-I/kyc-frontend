@@ -675,7 +675,7 @@ const assignSourceKeys = (rows: ParsedRow[], inputs: any) => {
 };
 
 const isFaceMatchRow = (row: ParsedRow) => {
-  const label = `${row.sourceTool || ""} ${row.name || ""}`.toLowerCase();
+  const label = `${row.sourceTool || ""} ${row.name || ""} ${row.sourceKey || ""}`.toLowerCase();
   return label.includes("facematch") || label.includes("face match");
 };
 

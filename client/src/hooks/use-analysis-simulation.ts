@@ -649,13 +649,22 @@ const buildFaceMatchEvidence = (imageKeys: string[]) => {
     if (lower.includes("input")) names.input = key;
     if (lower.includes("swapped") || lower.includes("swap")) names.swapped = key;
   });
-  if (!names.target || !names.input || !names.swapped) return [] as string[];
+  if (!names.target || !names.input || !names.swapped) {
+    return {
+      success: false,
+      evidence: ["Face match: Not successful (missing target/input/swapped)"],
+    };
+  }
 
-  return [
-    `${filenameForDisplay(names.target)} vs ${filenameForDisplay(names.swapped)}: matched`,
-    `${filenameForDisplay(names.input)} vs ${filenameForDisplay(names.swapped)}: matched`,
-    `${filenameForDisplay(names.input)} vs ${filenameForDisplay(names.target)}: not matched`,
-  ];
+  return {
+    success: true,
+    evidence: [
+      "Face match: Successful",
+      `${filenameForDisplay(names.target)} vs ${filenameForDisplay(names.swapped)}: matched`,
+      `${filenameForDisplay(names.input)} vs ${filenameForDisplay(names.swapped)}: matched`,
+      `${filenameForDisplay(names.input)} vs ${filenameForDisplay(names.target)}: not matched`,
+    ],
+  };
 };
 
 const recomputeStats = (results: AnalysisResult[]): KpiStats => {
@@ -811,10 +820,10 @@ export function useAnalysisSimulation() {
       const fallbackRows = rows.length === 0 ? buildRowsFromInputs(jobInfo.inputs || jobData.inputs || jobData.metadata || {}) : [];
       const finalRows = rows.length ? rows : fallbackRows;
 
-      const faceMatchEvidence =
+      const faceMatchInfo =
         toolType === 'image' && imageModels && imageModels.includes('image-facematch')
           ? buildFaceMatchEvidence(imageKeys)
-          : [];
+          : null;
 
       const now = Date.now();
       const newResults: AnalysisResult[] = finalRows.map((row) => {
@@ -846,15 +855,17 @@ export function useAnalysisSimulation() {
         };
       });
 
-      if (faceMatchEvidence.length > 0) {
+      if (faceMatchInfo) {
+        const faceMatchScore = faceMatchInfo.success ? 5 : 50;
+        const faceMatchDecision = mapRiskToDecision(faceMatchScore);
         newResults.push({
           id: nextIdRef.current++,
           filename: "Face Match",
           toolType: "image",
-          riskScore: 5,
-          priority: "LOW",
-          decision: "APPROVE",
-          evidence: faceMatchEvidence,
+          riskScore: faceMatchScore,
+          priority: faceMatchDecision.priority,
+          decision: faceMatchDecision.decision,
+          evidence: faceMatchInfo.evidence,
           actionRequired: undefined,
           timestamp: new Date(now).toISOString(),
         });

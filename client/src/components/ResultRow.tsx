@@ -22,6 +22,7 @@ interface ResultRowProps {
 
 export function ResultRow({ result, onApprove, onReject, onManualReview }: ResultRowProps) {
   const [expanded, setExpanded] = React.useState(false);
+  const [previewOpen, setPreviewOpen] = React.useState(false);
   
   // Risk level: LOW (<40), MEDIUM (40-69), CRITICAL (>=70)
   const riskLevel = result.riskScore >= 70 ? 'CRITICAL' : result.riskScore >= 40 ? 'MEDIUM' : 'LOW';
@@ -29,23 +30,116 @@ export function ResultRow({ result, onApprove, onReject, onManualReview }: Resul
 
   const hasPreview = !!result.previewUrl;
 
-  const getIcon = () => {
-    if (result.previewUrl) {
+  const renderSmallPreview = () => {
+    if (!result.previewUrl) {
+      switch (result.toolType) {
+        case 'document': return <File className="w-5 h-5 text-[var(--accent)]" />;
+        case 'image': return <ImageIcon className="w-5 h-5 text-[var(--accent)]" />;
+        case 'video': return <Film className="w-5 h-5 text-[var(--accent)]" />;
+        case 'audio': return <Mic className="w-5 h-5 text-[var(--accent)]" />;
+        default: return <File className="w-5 h-5" />;
+      }
+    }
+
+    const commonClass =
+      "w-24 h-24 rounded-[var(--radius)] border border-[var(--border)] shadow-[var(--shadow)] cursor-pointer";
+    const handleClick = (event: React.MouseEvent) => {
+      event.stopPropagation();
+      setPreviewOpen((prev) => !prev);
+    };
+
+    if (result.toolType === 'video') {
       return (
-        <img 
-          src={result.previewUrl} 
-          alt="File preview" 
-          className="w-24 h-24 object-cover rounded-[var(--radius)] border border-[var(--border)] shadow-[var(--shadow)]"
+        <video
+          src={result.previewUrl}
+          muted
+          playsInline
+          className={`${commonClass} object-cover`}
+          onClick={handleClick}
         />
       );
     }
-    switch (result.toolType) {
-      case 'document': return <File className="w-5 h-5 text-[var(--accent)]" />;
-      case 'image': return <ImageIcon className="w-5 h-5 text-[var(--accent)]" />;
-      case 'video': return <Film className="w-5 h-5 text-[var(--accent)]" />;
-      case 'audio': return <Mic className="w-5 h-5 text-[var(--accent)]" />;
-      default: return <File className="w-5 h-5" />;
+
+    if (result.toolType === 'audio') {
+      return (
+        <div
+          className={`${commonClass} flex flex-col items-center justify-center gap-2 bg-[var(--panel2)]/50`}
+          onClick={handleClick}
+        >
+          <Mic className="w-5 h-5 text-[var(--accent)]" />
+          <span className="text-[10px] text-[var(--muted)]">Audio</span>
+        </div>
+      );
     }
+
+    return (
+      <img
+        src={result.previewUrl}
+        alt="File preview"
+        className={`${commonClass} object-cover`}
+        onClick={handleClick}
+      />
+    );
+  };
+
+  const renderLargePreview = () => {
+    if (!previewOpen || !result.previewUrl) return null;
+
+    const handleClose = () => setPreviewOpen(false);
+    const stop = (event: React.MouseEvent) => event.stopPropagation();
+
+    let content: React.ReactNode;
+    if (result.toolType === 'video') {
+      content = (
+        <video
+          src={result.previewUrl}
+          muted
+          controls
+          playsInline
+          className="max-h-[80vh] max-w-[90vw] rounded-[var(--radius)]"
+        />
+      );
+    } else if (result.toolType === 'audio') {
+      content = (
+        <audio
+          src={result.previewUrl}
+          controls
+          className="w-[min(90vw,420px)]"
+        />
+      );
+    } else {
+      content = (
+        <img
+          src={result.previewUrl}
+          alt="File preview"
+          className="max-h-[80vh] max-w-[90vw] rounded-[var(--radius)]"
+          onClick={handleClose}
+        />
+      );
+    }
+
+    return (
+      <AnimatePresence>
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-sm flex items-center justify-center"
+          onClick={handleClose}
+        >
+          <motion.div
+            initial={{ scale: 0.98, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.98, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={stop}
+            className="p-4 bg-[var(--panel)] border border-[var(--border)] rounded-[var(--radius)] shadow-[var(--shadow-strong)]"
+          >
+            {content}
+          </motion.div>
+        </motion.div>
+      </AnimatePresence>
+    );
   };
 
   const getRiskColor = (score: number) => {
@@ -71,7 +165,7 @@ export function ResultRow({ result, onApprove, onReject, onManualReview }: Resul
             "shrink-0 flex items-center justify-center",
             !hasPreview && "p-2.5 bg-[var(--panel2)] rounded-lg border border-[var(--border)]"
           )}>
-            {getIcon()}
+            {renderSmallPreview()}
           </div>
           
           <div className="flex-1 min-w-0">
@@ -124,6 +218,8 @@ export function ResultRow({ result, onApprove, onReject, onManualReview }: Resul
           </div>
         </div>
       </div>
+
+      {renderLargePreview()}
 
       {/* Expanded Details */}
       <AnimatePresence>

@@ -15,7 +15,6 @@ type ParsedRow = {
 };
 
 const DEFAULT_MEDIA_API_BASE = "https://d1hj0828nk37mv.cloudfront.net";
-const DEFAULT_MEDIA_API_KEY = "key_dcee18935059b2a7.sk_live_qOaXfTpuEpxX2OhRWIaeOLRMq3gBLy7e";
 const DEFAULT_DOCUMENT_API_URL =
   "https://371kvaeiy5.execute-api.ap-south-1.amazonaws.com/prod/get-upload-url";
 
@@ -50,16 +49,19 @@ const runtimeConfig = (() => {
 })();
 
 const MEDIA_API_BASE = String(
-  runtimeConfig.API_URL || (window as any).API_URL || DEFAULT_MEDIA_API_BASE
+  runtimeConfig.API_URL ||
+    (window as any).API_URL ||
+    (import.meta as any).env?.VITE_MEDIA_API_BASE ||
+    DEFAULT_MEDIA_API_BASE
 ).replace(/\/+$/, "");
 const MEDIA_API_KEY_RAW = String(
-  runtimeConfig.API_KEY ||
+  (import.meta as any).env?.VITE_MEDIA_API_KEY ||
+    runtimeConfig.API_KEY ||
     (runtimeConfig as any).api_key_id ||
     (runtimeConfig as any).apiKeyId ||
     (window as any).API_KEY ||
     (window as any).api_key_id ||
     (window as any).apiKeyId ||
-    DEFAULT_MEDIA_API_KEY ||
     ""
 ).trim();
 const MEDIA_API_KEY = MEDIA_API_KEY_RAW
@@ -68,13 +70,17 @@ const MEDIA_API_KEY = MEDIA_API_KEY_RAW
     : `Bearer ${MEDIA_API_KEY_RAW}`
   : "";
 const DOCUMENT_API_URL = String(
-  (runtimeConfig as any).DOCUMENT_API_URL ||
+  (import.meta as any).env?.VITE_DOCUMENT_API_URL ||
+    (runtimeConfig as any).DOCUMENT_API_URL ||
     (window as any).DOCUMENT_API_URL ||
     DEFAULT_DOCUMENT_API_URL
 ).trim();
 const DOCUMENT_API_BASE = DOCUMENT_API_URL.replace(/\/get-upload-url\/?$/, "");
 const DOCUMENT_API_KEY = String(
-  (runtimeConfig as any).DOCUMENT_API_KEY || (window as any).DOCUMENT_API_KEY || ""
+  (import.meta as any).env?.VITE_DOCUMENT_API_KEY ||
+    (runtimeConfig as any).DOCUMENT_API_KEY ||
+    (window as any).DOCUMENT_API_KEY ||
+    ""
 ).trim();
 const ORIGIN_VERIFY = String(runtimeConfig.ORIGIN_VERIFY || (window as any).ORIGIN_VERIFY || "").trim();
 const ORIGIN_VERIFY_HEADER = String(
@@ -133,13 +139,13 @@ const requestPresign = async (
   }
 
   const data = await res.json();
-  if (!data.uploadUrl || !data.s3Key) {
-    throw new Error("Presign response missing uploadUrl or s3Key");
+  if (!data.uploadUrl || !data.key) {
+    throw new Error("Presign response missing uploadUrl or key");
   }
 
   return {
     uploadUrl: data.uploadUrl as string,
-    s3Key: data.s3Key as string,
+    key: data.key as string,
     contentType,
     requiredHeaders: (data.requiredHeaders || {}) as Record<string, string>,
   };
@@ -174,14 +180,14 @@ const uploadMediaList = async (
 ) => {
   const keys: string[] = [];
   for (const file of files) {
-    const { uploadUrl, s3Key, contentType, requiredHeaders } = await requestPresign(
+    const { uploadUrl, key, contentType, requiredHeaders } = await requestPresign(
       file,
       jobId,
       presignUrl,
       apiKey
     );
     await uploadToS3(file, uploadUrl, contentType, requiredHeaders);
-    keys.push(s3Key);
+    keys.push(key);
   }
   return keys;
 };

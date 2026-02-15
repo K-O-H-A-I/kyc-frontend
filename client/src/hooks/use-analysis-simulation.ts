@@ -18,7 +18,7 @@ const DEFAULT_MEDIA_API_BASE = "https://d1hj0828nk37mv.cloudfront.net";
 const DEFAULT_MEDIA_API_KEY =
   "key_dcee18935059b2a7.sk_live_qOaXfTpuEpxX2OhRWIaeOLRMq3gBLy7e";
 const DEFAULT_MEDIA_API_KEY_HEADER = "x-api-key";
-const DEFAULT_DOCUMENT_API_URL =
+const DEFAULT_DOCUMENT_UPLOAD_URL =
   "https://371kvaeiy5.execute-api.ap-south-1.amazonaws.com/prod/get-upload-url";
 
 const runtimeConfig = (() => {
@@ -54,9 +54,11 @@ const runtimeConfig = (() => {
 const MEDIA_API_BASE = DEFAULT_MEDIA_API_BASE.replace(/\/+$/, "");
 const MEDIA_API_KEY_RAW = DEFAULT_MEDIA_API_KEY.trim();
 const MEDIA_API_KEY = MEDIA_API_KEY_RAW;
-const DOCUMENT_API_URL = DEFAULT_DOCUMENT_API_URL.trim();
+const DOCUMENT_API_URL = DEFAULT_DOCUMENT_UPLOAD_URL.trim();
 const DOCUMENT_API_BASE = DOCUMENT_API_URL.replace(/\/get-upload-url\/?$/, "");
+const DOCUMENT_ANALYZE_URL = `${DOCUMENT_API_BASE}/analyze`;
 const DOCUMENT_API_KEY = "";
+const DOCUMENT_BUCKET_FALLBACK = "doc-risk-demo-reagvis";
 const ORIGIN_VERIFY = String(runtimeConfig.ORIGIN_VERIFY || (window as any).ORIGIN_VERIFY || "").trim();
 const ORIGIN_VERIFY_HEADER = String(
   runtimeConfig.ORIGIN_VERIFY_HEADER || "x-origin-verify"
@@ -74,6 +76,68 @@ const buildAuthHeaders = (
   }
   if (ORIGIN_VERIFY) headers[ORIGIN_VERIFY_HEADER] = ORIGIN_VERIFY;
   return headers;
+};
+
+const resolveBucketFromUploadUrl = (uploadUrl: string) => {
+  try {
+    const url = new URL(uploadUrl);
+    const hostParts = url.hostname.split(".");
+    const hostBucket = hostParts[0];
+    if (hostBucket && !hostBucket.startsWith("s3")) {
+      return hostBucket;
+    }
+    const pathParts = url.pathname.split("/").filter(Boolean);
+    return pathParts[0] || "";
+  } catch (error) {
+    return "";
+  }
+};
+
+const requestDocumentPresign = async (file: File) => {
+  const payload = {
+    filename: file.name || `upload-${Date.now()}.png`,
+    contentType: "image/png",
+  };
+  const res = await fetch(DOCUMENT_API_URL, {
+    method: "POST",
+    headers: buildAuthHeaders({ "Content-Type": "application/json" }, DOCUMENT_API_KEY),
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Presign failed (${res.status}): ${text || res.statusText}`);
+  }
+
+  const data = await res.json();
+  const key = data.key ?? data["s3" + "Key"];
+  const uploadUrl = data.upload_url ?? data.uploadUrl;
+  if (!uploadUrl || !key) {
+    throw new Error("Presign response missing upload_url or key");
+  }
+
+  return {
+    uploadUrl: uploadUrl as string,
+    key: key as string,
+    contentType: "image/png",
+  };
+};
+
+const analyzeDocument = async (bucket: string, key: string) => {
+  const res = await fetch(DOCUMENT_ANALYZE_URL, {
+    method: "POST",
+    headers: buildAuthHeaders({ "Content-Type": "application/json" }, DOCUMENT_API_KEY),
+    body: JSON.stringify({ bucket, key }),
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(
+      `Document analysis failed (${res.status}): ${(data as any).error || res.statusText}`
+    );
+  }
+
+  return data as any;
 };
 
 const getApiConfig = (toolType: ToolType) => {
@@ -110,7 +174,10 @@ const requestPresign = async (
   const filename = file.name || `upload-${Date.now()}.bin`;
   const contentType = file.type || "application/octet-stream";
   const payload: Record<string, string> = { filename, contentType };
-  if (jobId) payload.jobId = jobId;
+  if (jobId) {
+    payload.jobId = jobId;
+    payload.job_id = jobId;
+  }
 
   const res = await fetch(presignUrl, {
     method: "POST",
@@ -124,15 +191,19 @@ const requestPresign = async (
   }
 
   const data = await res.json();
-  const key = data.key ?? data["s3" + "Key"];
-  const uploadUrl = data.upload_url ?? data.uploadUrl;
-  if (!uploadUrl || !key) {
-    throw new Error("Presign response missing upload_url or key");
+  const s3Key =
+    data.s3Key ??
+    data.s3_key ??
+    data.key ??
+    data["s3" + "Key"];
+  const uploadUrl = data.uploadUrl ?? data.upload_url ?? data["upload_url"];
+  if (!uploadUrl || !s3Key) {
+    throw new Error("Presign response missing uploadUrl or s3Key");
   }
 
   return {
     uploadUrl: uploadUrl as string,
-    key: key as string,
+    s3Key: s3Key as string,
     contentType,
     requiredHeaders: (data.requiredHeaders || {}) as Record<string, string>,
   };
@@ -168,7 +239,7 @@ const uploadMediaList = async (
 ) => {
   const keys: string[] = [];
   for (const file of files) {
-    const { uploadUrl, key, contentType, requiredHeaders } = await requestPresign(
+    const { uploadUrl, s3Key, contentType, requiredHeaders } = await requestPresign(
       file,
       jobId,
       presignUrl,
@@ -176,7 +247,7 @@ const uploadMediaList = async (
       apiKeyHeader
     );
     await uploadToS3(file, uploadUrl, contentType, requiredHeaders);
-    keys.push(key);
+    keys.push(s3Key);
   }
   return keys;
 };
@@ -346,6 +417,9 @@ const extractPredictions = (obj: any) => {
   if (obj.data && obj.data.outputs && Array.isArray(obj.data.outputs.predictions)) {
     return obj.data.outputs.predictions;
   }
+  if (obj.data && obj.data.data && obj.data.data.outputs && Array.isArray(obj.data.data.outputs.predictions)) {
+    return obj.data.data.outputs.predictions;
+  }
   return null;
 };
 
@@ -355,6 +429,9 @@ const extractIsLive = (obj: any) => {
   if (obj.outputs && typeof obj.outputs.is_live === "boolean") return obj.outputs.is_live;
   if (obj.data && obj.data.outputs && typeof obj.data.outputs.is_live === "boolean") {
     return obj.data.outputs.is_live;
+  }
+  if (obj.data && obj.data.data && obj.data.data.outputs && typeof obj.data.data.outputs.is_live === "boolean") {
+    return obj.data.data.outputs.is_live;
   }
   return null;
 };
@@ -428,12 +505,16 @@ const buildRowsFromResults = (results: any) => {
 
   for (const { key, value } of entries) {
     const resultValue = value && typeof value === "object" ? value : { output: value };
-    const dataAgentType = resultValue.data && typeof resultValue.data.agent_type === "string"
-      ? resultValue.data.agent_type
-      : "";
+    const dataAgentType =
+      resultValue.data && typeof resultValue.data.agent_type === "string"
+        ? resultValue.data.agent_type
+        : resultValue.data && resultValue.data.data && typeof resultValue.data.data.agent_type === "string"
+          ? resultValue.data.data.agent_type
+          : "";
     let mediaType =
       mediaTypeFromFilename(key) ||
       mediaTypeFromTool(resultValue.tool) ||
+      mediaTypeFromTool(resultValue.type) ||
       mediaTypeFromTool(resultValue.agent_type || "") ||
       mediaTypeFromTool(dataAgentType);
 
@@ -477,6 +558,7 @@ const buildRowsFromResults = (results: any) => {
         : "") ||
       dataAgentType ||
       resultValue.agent_type ||
+      resultValue.type ||
       resultValue.tool ||
       "Result";
 
@@ -582,6 +664,51 @@ export function useAnalysisSimulation() {
     setToastMessage("submitting");
 
     try {
+      if (toolType === "document") {
+        const file = files[0];
+        fileCacheRef.current.set(file.name.toLowerCase(), file);
+
+        const { uploadUrl, key, contentType } = await requestDocumentPresign(file);
+        await uploadToS3(file, uploadUrl, contentType);
+        setToastMessage("submitted");
+
+        const bucket = resolveBucketFromUploadUrl(uploadUrl) || DOCUMENT_BUCKET_FALLBACK;
+        const analysis = await analyzeDocument(bucket, key);
+        setToastMessage("sucess");
+
+        const riskScoreRaw =
+          typeof analysis.risk_score === "number"
+            ? analysis.risk_score
+            : typeof analysis.riskScore === "number"
+              ? analysis.riskScore
+              : 50;
+        const riskScore = Math.max(0, Math.min(100, Math.round(riskScoreRaw)));
+        const { priority, decision } = mapRiskToDecision(riskScore);
+        const previewUrl = URL.createObjectURL(file);
+        const now = Date.now();
+
+        const docResult: AnalysisResult = {
+          id: nextIdRef.current++,
+          filename: file.name,
+          toolType: "document",
+          riskScore,
+          priority,
+          decision,
+          evidence: [`Risk score: ${riskScore}`],
+          actionRequired: decision === "MANUAL_REVIEW" ? "Manual Review" : undefined,
+          timestamp: new Date(now).toISOString(),
+          previewUrl,
+        };
+
+        setResults((prev) => {
+          const merged = [docResult, ...prev];
+          setStats(recomputeStats(merged));
+          return merged;
+        });
+
+        return;
+      }
+
       const apiConfig = getApiConfig(toolType);
       const jobId = generateJobId();
 

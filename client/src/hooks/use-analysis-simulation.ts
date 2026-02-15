@@ -12,6 +12,7 @@ type ParsedRow = {
   verdict: string;
   score: number | null;
   mediaType: 'image' | 'video' | 'audio' | '';
+  sourceKey?: string;
 };
 
 const DEFAULT_MEDIA_API_BASE = "https://d1hj0828nk37mv.cloudfront.net";
@@ -589,6 +590,7 @@ const buildRowsFromResults = (results: any) => {
       verdict,
       score,
       mediaType: (mediaType as ParsedRow['mediaType']) || "",
+      sourceKey: String(key),
     });
   }
 
@@ -614,10 +616,27 @@ const buildRowsFromInputs = (inputs: any) => {
       verdict,
       score: null,
       mediaType: mediaType as ParsedRow['mediaType'],
+      sourceKey: String(key),
     });
   });
 
   return rows;
+};
+
+const findPreviewFile = (row: ParsedRow, cache: Map<string, File>) => {
+  const candidates: string[] = [];
+  if (row.name) candidates.push(row.name);
+  if (row.sourceKey) {
+    candidates.push(extractFilename(row.sourceKey));
+    candidates.push(filenameForDisplay(row.sourceKey));
+  }
+  for (const candidate of candidates) {
+    const key = candidate.trim().toLowerCase();
+    if (!key) continue;
+    const file = cache.get(key);
+    if (file) return file;
+  }
+  return undefined;
 };
 
 const mapVerdictToRisk = (row: ParsedRow) => {
@@ -836,7 +855,7 @@ export function useAnalysisSimulation() {
             : row.verdict;
         const riskScore = mapVerdictToRisk(row);
         const { priority, decision } = mapRiskToDecision(riskScore);
-        const previewFile = fileCacheRef.current.get(row.name.toLowerCase());
+        const previewFile = findPreviewFile(row, fileCacheRef.current);
         const previewUrl = previewFile ? URL.createObjectURL(previewFile) : undefined;
         const resolvedToolType = toolType === 'document'
           ? 'document'

@@ -7,6 +7,7 @@ import { useAnalysisSimulation } from '@/hooks/use-analysis-simulation';
 import { ToolType } from '@shared/schema';
 import { 
   FileText, 
+  Search,
   Globe, 
   Download,
   Loader2

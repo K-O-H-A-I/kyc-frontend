@@ -14,7 +14,10 @@ type ParsedRow = {
   mediaType: 'image' | 'video' | 'audio' | '';
 };
 
-const DEFAULT_API_BASE = "https://d1hj0828nk37mv.cloudfront.net";
+const DEFAULT_MEDIA_API_BASE = "https://d1hj0828nk37mv.cloudfront.net";
+const DEFAULT_MEDIA_API_KEY = "key_dcee18935059b2a7.sk_live_qOaXfTpuEpxX2OhRWIaeOLRMq3gBLy7e";
+const DEFAULT_DOCUMENT_API_URL =
+  "https://371kvaeiy5.execute-api.ap-south-1.amazonaws.com/prod/get-upload-url";
 
 const runtimeConfig = (() => {
   const config: Record<string, string> = {};
@@ -46,33 +49,58 @@ const runtimeConfig = (() => {
   return config;
 })();
 
-const API_BASE = String(
-  runtimeConfig.API_URL || (window as any).API_URL || DEFAULT_API_BASE
+const MEDIA_API_BASE = String(
+  runtimeConfig.API_URL || (window as any).API_URL || DEFAULT_MEDIA_API_BASE
 ).replace(/\/+$/, "");
-const API_KEY_RAW = String(
+const MEDIA_API_KEY_RAW = String(
   runtimeConfig.API_KEY ||
     (runtimeConfig as any).api_key_id ||
     (runtimeConfig as any).apiKeyId ||
     (window as any).API_KEY ||
     (window as any).api_key_id ||
     (window as any).apiKeyId ||
+    DEFAULT_MEDIA_API_KEY ||
     ""
 ).trim();
-const API_KEY = API_KEY_RAW
-  ? API_KEY_RAW.toLowerCase().startsWith("bearer ")
-    ? API_KEY_RAW
-    : `Bearer ${API_KEY_RAW}`
+const MEDIA_API_KEY = MEDIA_API_KEY_RAW
+  ? MEDIA_API_KEY_RAW.toLowerCase().startsWith("bearer ")
+    ? MEDIA_API_KEY_RAW
+    : `Bearer ${MEDIA_API_KEY_RAW}`
   : "";
+const DOCUMENT_API_URL = String(
+  (runtimeConfig as any).DOCUMENT_API_URL ||
+    (window as any).DOCUMENT_API_URL ||
+    DEFAULT_DOCUMENT_API_URL
+).trim();
+const DOCUMENT_API_BASE = DOCUMENT_API_URL.replace(/\/get-upload-url\/?$/, "");
+const DOCUMENT_API_KEY = String(
+  (runtimeConfig as any).DOCUMENT_API_KEY || (window as any).DOCUMENT_API_KEY || ""
+).trim();
 const ORIGIN_VERIFY = String(runtimeConfig.ORIGIN_VERIFY || (window as any).ORIGIN_VERIFY || "").trim();
 const ORIGIN_VERIFY_HEADER = String(
   runtimeConfig.ORIGIN_VERIFY_HEADER || "x-origin-verify"
 ).trim();
 
-const buildAuthHeaders = (extra: Record<string, string> = {}) => {
+const buildAuthHeaders = (extra: Record<string, string> = {}, apiKey = MEDIA_API_KEY) => {
   const headers = { ...extra };
-  if (API_KEY) headers.Authorization = API_KEY;
+  if (apiKey) headers.Authorization = apiKey;
   if (ORIGIN_VERIFY) headers[ORIGIN_VERIFY_HEADER] = ORIGIN_VERIFY;
   return headers;
+};
+
+const getApiConfig = (toolType: ToolType) => {
+  if (toolType === "document") {
+    return {
+      baseUrl: DOCUMENT_API_BASE,
+      presignUrl: DOCUMENT_API_URL,
+      apiKey: DOCUMENT_API_KEY,
+    };
+  }
+  return {
+    baseUrl: MEDIA_API_BASE,
+    presignUrl: `${MEDIA_API_BASE.replace(/\/+$/, "")}/uploads/presign`,
+    apiKey: MEDIA_API_KEY,
+  };
 };
 
 const generateJobId = () => {
@@ -82,15 +110,20 @@ const generateJobId = () => {
   return `job-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
 };
 
-const requestPresign = async (file: File, jobId?: string) => {
+const requestPresign = async (
+  file: File,
+  jobId: string | undefined,
+  presignUrl: string,
+  apiKey: string
+) => {
   const filename = file.name || `upload-${Date.now()}.bin`;
   const contentType = file.type || "application/octet-stream";
   const payload: Record<string, string> = { filename, contentType };
   if (jobId) payload.jobId = jobId;
 
-  const res = await fetch(API_BASE.replace(/\/+$/, "") + "/uploads/presign", {
+  const res = await fetch(presignUrl, {
     method: "POST",
-    headers: buildAuthHeaders({ "Content-Type": "application/json" }),
+    headers: buildAuthHeaders({ "Content-Type": "application/json" }, apiKey),
     body: JSON.stringify(payload),
   });
 
@@ -133,23 +166,39 @@ const uploadToS3 = async (
   }
 };
 
-const uploadMediaList = async (files: File[], jobId?: string) => {
+const uploadMediaList = async (
+  files: File[],
+  jobId: string | undefined,
+  presignUrl: string,
+  apiKey: string
+) => {
   const keys: string[] = [];
   for (const file of files) {
-    const { uploadUrl, s3Key, contentType, requiredHeaders } = await requestPresign(file, jobId);
+    const { uploadUrl, s3Key, contentType, requiredHeaders } = await requestPresign(
+      file,
+      jobId,
+      presignUrl,
+      apiKey
+    );
     await uploadToS3(file, uploadUrl, contentType, requiredHeaders);
     keys.push(s3Key);
   }
   return keys;
 };
 
-const submitJob = async (userId: string, inputs: Record<string, unknown>, jobId?: string) => {
+const submitJob = async (
+  userId: string,
+  inputs: Record<string, unknown>,
+  jobId: string | undefined,
+  baseUrl: string,
+  apiKey: string
+) => {
   const payload: Record<string, unknown> = { userId: userId || "guest", inputs };
   if (jobId) payload.jobId = jobId;
 
-  const res = await fetch(API_BASE.replace(/\/+$/, "") + "/jobs", {
+  const res = await fetch(baseUrl.replace(/\/+$/, "") + "/jobs", {
     method: "POST",
-    headers: buildAuthHeaders({ "Content-Type": "application/json" }),
+    headers: buildAuthHeaders({ "Content-Type": "application/json" }, apiKey),
     body: JSON.stringify(payload),
   });
 
@@ -167,13 +216,13 @@ const submitJob = async (userId: string, inputs: Record<string, unknown>, jobId?
   return data as any;
 };
 
-const fetchJob = async (jobId: string) => {
-  const cleanBase = API_BASE.replace(/\/+$/, "");
+const fetchJob = async (jobId: string, baseUrl: string, apiKey: string) => {
+  const cleanBase = baseUrl.replace(/\/+$/, "");
   const url = `${cleanBase}/jobs/${encodeURIComponent(jobId)}`;
 
   const res = await fetch(url, {
     method: "GET",
-    headers: buildAuthHeaders({ Accept: "application/json" }),
+    headers: buildAuthHeaders({ Accept: "application/json" }, apiKey),
   });
 
   if (!res.ok) {
@@ -186,16 +235,22 @@ const fetchJob = async (jobId: string) => {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const pollJob = async (jobId: string, maxAttempts = 20, intervalMs = 3000) => {
+const pollJob = async (
+  jobId: string,
+  baseUrl: string,
+  apiKey: string,
+  maxAttempts = 20,
+  intervalMs = 3000
+) => {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const data = await fetchJob(jobId);
+    const data = await fetchJob(jobId, baseUrl, apiKey);
     const status = String(data.status || "").toUpperCase();
     if (status === "COMPLETED" || status === "FAILED") {
       return data;
     }
     await sleep(intervalMs);
   }
-  return fetchJob(jobId);
+  return fetchJob(jobId, baseUrl, apiKey);
 };
 
 const extractFilename = (rawKey: string) => {
@@ -525,6 +580,7 @@ export function useAnalysisSimulation() {
     setToastMessage("submitting");
 
     try {
+      const apiConfig = getApiConfig(toolType);
       const jobId = generateJobId();
 
       const imageFiles: File[] = [];
@@ -548,9 +604,9 @@ export function useAnalysisSimulation() {
       audioFiles.forEach((file) => fileCacheRef.current.set(file.name.toLowerCase(), file));
 
       const [imageKeys, videoKeys, audioKeys] = await Promise.all([
-        uploadMediaList(imageFiles, jobId),
-        uploadMediaList(videoFiles, jobId),
-        uploadMediaList(audioFiles, jobId),
+        uploadMediaList(imageFiles, jobId, apiConfig.presignUrl, apiConfig.apiKey),
+        uploadMediaList(videoFiles, jobId, apiConfig.presignUrl, apiConfig.apiKey),
+        uploadMediaList(audioFiles, jobId, apiConfig.presignUrl, apiConfig.apiKey),
       ]);
 
       const inputs: Record<string, unknown> = {
@@ -563,10 +619,20 @@ export function useAnalysisSimulation() {
         inputs.imageModels = imageModels;
       }
 
-      const jobInfo = await submitJob("demo_user", inputs, jobId);
+      const jobInfo = await submitJob(
+        "demo_user",
+        inputs,
+        jobId,
+        apiConfig.baseUrl,
+        apiConfig.apiKey
+      );
       setToastMessage("submitted");
 
-      const jobData = await pollJob(jobInfo.jobId || jobId);
+      const jobData = await pollJob(
+        jobInfo.jobId || jobId,
+        apiConfig.baseUrl,
+        apiConfig.apiKey
+      );
       setToastMessage("sucess");
 
       const resultsPayload = resolveResultsPayload(jobData);

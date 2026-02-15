@@ -331,21 +331,6 @@ const fetchJob = async (
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const loadImageFromFile = (file: File) =>
-  new Promise<HTMLImageElement>((resolve, reject) => {
-    const objectUrl = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      URL.revokeObjectURL(objectUrl);
-      resolve(img);
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(objectUrl);
-      reject(new Error("Failed to load image"));
-    };
-    img.src = objectUrl;
-  });
-
 const collectFaceMatchFiles = (files: File[]) => {
   const matches: { target?: File; input?: File; swapped?: File } = {};
   files.forEach((file) => {
@@ -355,54 +340,18 @@ const collectFaceMatchFiles = (files: File[]) => {
     if (name.includes("input")) matches.input = file;
   });
 
-  const ordered: Array<{ file: File; label: string }> = [];
-  if (matches.target) ordered.push({ file: matches.target, label: "Target" });
-  if (matches.input) ordered.push({ file: matches.input, label: "Input" });
-  if (matches.swapped) ordered.push({ file: matches.swapped, label: "Swapped" });
+  const ordered: File[] = [];
+  if (matches.target) ordered.push(matches.target);
+  if (matches.input) ordered.push(matches.input);
+  if (matches.swapped) ordered.push(matches.swapped);
 
   if (ordered.length > 0) return ordered.slice(0, 3);
 
-  return files.slice(0, 3).map((file) => ({ file, label: file.name }));
+  return files.slice(0, 3);
 };
 
-const buildFaceMatchPreview = async (
-  items: Array<{ file: File; label: string }>
-) => {
-  if (!items.length) return undefined;
-  const images = await Promise.all(items.map((item) => loadImageFromFile(item.file)));
-  const tileWidth = 180;
-  const tileHeight = 120;
-  const labelHeight = 18;
-  const gap = 10;
-  const totalWidth = images.length * tileWidth + (images.length - 1) * gap;
-  const totalHeight = tileHeight + labelHeight;
-  const canvas = document.createElement("canvas");
-  canvas.width = totalWidth;
-  canvas.height = totalHeight;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return undefined;
-
-  ctx.fillStyle = "#0b0f1a";
-  ctx.fillRect(0, 0, totalWidth, totalHeight);
-  ctx.font = "12px sans-serif";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillStyle = "#e5e7eb";
-
-  images.forEach((img, idx) => {
-    const x = idx * (tileWidth + gap);
-    const y = 0;
-    const scale = Math.max(tileWidth / img.width, tileHeight / img.height);
-    const drawWidth = img.width * scale;
-    const drawHeight = img.height * scale;
-    const offsetX = x + (tileWidth - drawWidth) / 2;
-    const offsetY = y + (tileHeight - drawHeight) / 2;
-    ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
-    ctx.fillText(items[idx]?.label || "", x + tileWidth / 2, tileHeight + labelHeight / 2);
-  });
-
-  return canvas.toDataURL("image/jpeg", 0.86);
-};
+const buildFaceMatchPreviewUrls = (files: File[]) =>
+  files.map((file) => URL.createObjectURL(file));
 
 const pollJob = async (
   jobId: string,
@@ -1002,15 +951,22 @@ export function useAnalysisSimulation() {
         toolType === 'image' && imageModels && imageModels.includes('image-facematch')
           ? buildFaceMatchEvidence(imageKeys)
           : null;
-      const faceMatchPreviewUrl =
+      const faceMatchPreviewUrls =
         toolType === 'image' && imageModels && imageModels.includes('image-facematch')
-          ? await buildFaceMatchPreview(collectFaceMatchFiles(imageFiles))
+          ? buildFaceMatchPreviewUrls(collectFaceMatchFiles(imageFiles))
           : undefined;
 
       const now = Date.now();
-      let effectiveRows = wantsFaceMatchOnly ? finalRows.filter(isFaceMatchRow) : finalRows;
+      let effectiveRows = finalRows;
+      if (wantsFaceMatchOnly) {
+        const faceRows = finalRows.filter(isFaceMatchRow);
+        effectiveRows = faceRows.length ? faceRows : finalRows;
+      }
       if (faceMatchInfo) {
         effectiveRows = effectiveRows.filter((row) => !isFaceMatchRow(row));
+        if (wantsFaceMatchOnly) {
+          effectiveRows = [];
+        }
       }
       const newResults: AnalysisResult[] = effectiveRows.map((row) => {
         const verdictLower = row.verdict.toLowerCase();
@@ -1024,12 +980,11 @@ export function useAnalysisSimulation() {
         const { priority, decision } = mapRiskToDecision(riskScore);
         const isRowFaceMatch = isFaceMatchRow(row);
         const previewFile = findPreviewFile(row, fileCacheRef.current);
-        const previewUrl =
-          isRowFaceMatch && faceMatchPreviewUrl
-            ? faceMatchPreviewUrl
-            : previewFile
-              ? URL.createObjectURL(previewFile)
-              : undefined;
+        const previewUrl = previewFile ? URL.createObjectURL(previewFile) : undefined;
+        const previewUrls =
+          isRowFaceMatch && faceMatchPreviewUrls && faceMatchPreviewUrls.length > 0
+            ? faceMatchPreviewUrls
+            : undefined;
         const resolvedToolType = toolType === 'document'
           ? 'document'
           : ((row.mediaType || toolType) as ToolType);
@@ -1044,6 +999,7 @@ export function useAnalysisSimulation() {
           actionRequired: decision === "MANUAL_REVIEW" ? "Manual Review" : undefined,
           timestamp: new Date(now).toISOString(),
           previewUrl,
+          previewUrls,
         };
       });
 
@@ -1060,7 +1016,7 @@ export function useAnalysisSimulation() {
           evidence: faceMatchInfo.evidence,
           actionRequired: undefined,
           timestamp: new Date(now).toISOString(),
-          previewUrl: faceMatchPreviewUrl,
+          previewUrls: faceMatchPreviewUrls,
         });
       }
 

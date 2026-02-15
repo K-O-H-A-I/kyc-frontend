@@ -31,6 +31,24 @@ export function ResultRow({ result, onApprove, onReject, onManualReview }: Resul
   const hasPreview = !!result.previewUrl;
 
   const renderSmallPreview = () => {
+    if (result.previewUrls && result.previewUrls.length > 0) {
+      const handleClick = (event: React.MouseEvent) => {
+        event.stopPropagation();
+        setPreviewOpen((prev) => !prev);
+      };
+      return (
+        <div className="flex items-center gap-2" onClick={handleClick}>
+          {result.previewUrls.slice(0, 3).map((url, idx) => (
+            <img
+              key={`${result.id}-thumb-${idx}`}
+              src={url}
+              alt="Face match preview"
+              className="w-16 h-16 object-cover rounded-[var(--radius)] border border-[var(--border)] shadow-[var(--shadow)]"
+            />
+          ))}
+        </div>
+      );
+    }
     if (!result.previewUrl) {
       switch (result.toolType) {
         case 'document': return <File className="w-5 h-5 text-[var(--accent)]" />;
@@ -83,12 +101,29 @@ export function ResultRow({ result, onApprove, onReject, onManualReview }: Resul
   };
 
   const renderLargePreview = () => {
-    if (!previewOpen || !result.previewUrl) return null;
+    if (!previewOpen || (!result.previewUrl && (!result.previewUrls || result.previewUrls.length === 0))) {
+      return null;
+    }
 
     const handleClose = () => setPreviewOpen(false);
     const stop = (event: React.MouseEvent) => event.stopPropagation();
 
     let content: React.ReactNode;
+    if (result.previewUrls && result.previewUrls.length > 0) {
+      content = (
+        <div className="flex flex-wrap items-center justify-center gap-4">
+          {result.previewUrls.slice(0, 3).map((url, idx) => (
+            <img
+              key={`${result.id}-large-${idx}`}
+              src={url}
+              alt="Face match preview"
+              className="max-h-[70vh] max-w-[30vw] rounded-[var(--radius)]"
+              onClick={handleClose}
+            />
+          ))}
+        </div>
+      );
+    } else if (result.toolType === 'video') {
     if (result.toolType === 'video') {
       content = (
         <video

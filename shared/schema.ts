@@ -15,6 +15,7 @@ export const analysisResults = pgTable("analysis_results", {
   actionRequired: text("action_required"),
   timestamp: timestamp("timestamp").defaultNow(),
   previewUrl: text("preview_url"),
+  previewUrls: jsonb("preview_urls").$type<string[]>(),
   metadata: jsonb("metadata").$type<{
     decision: string;
     evidence: string[];

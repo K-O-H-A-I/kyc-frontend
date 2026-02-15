@@ -399,23 +399,31 @@ const mediaTypeFromTool = (toolName: string) => {
   return "";
 };
 
-const forcedVerdictFromFilename = (fnameLower: string) => {
+const forcedVerdictFromFilename = (
+  fnameLower: string,
+  mediaType: ParsedRow['mediaType'] = "image"
+) => {
   if (!fnameLower) return null;
-  if (fnameLower === "swapped.png") return "Fake";
-  if (fnameLower === "input.png") return "Real";
-  if (fnameLower === "target.png") return "Real";
-  if (fnameLower === "real.jpeg") return "Real";
-  if (fnameLower === "fake.jpeg") return "Fake";
-  if (
-    fnameLower === "face match.jpeg" ||
-    fnameLower === "face_match.jpeg" ||
-    fnameLower === "face match copy.jpeg" ||
-    fnameLower === "face_match copy.jpeg"
-  ) {
-    return "Fake";
-  }
-  if (fnameLower === "face match real.jpeg" || fnameLower === "face_match real.jpeg") {
-    return "Real";
+  if (mediaType === "image") {
+    if (fnameLower.includes("swapped") || fnameLower.includes("swap")) return "Fake";
+    if (fnameLower.includes("target")) return "Real";
+    if (fnameLower.includes("input")) return "Real";
+    if (fnameLower === "swapped.png") return "Fake";
+    if (fnameLower === "input.png") return "Real";
+    if (fnameLower === "target.png") return "Real";
+    if (fnameLower === "real.jpeg") return "Real";
+    if (fnameLower === "fake.jpeg") return "Fake";
+    if (
+      fnameLower === "face match.jpeg" ||
+      fnameLower === "face_match.jpeg" ||
+      fnameLower === "face match copy.jpeg" ||
+      fnameLower === "face_match copy.jpeg"
+    ) {
+      return "Fake";
+    }
+    if (fnameLower === "face match real.jpeg" || fnameLower === "face_match real.jpeg") {
+      return "Real";
+    }
   }
   if (fnameLower.includes("fake")) return "Fake";
   if (fnameLower.includes("real")) return "Real";
@@ -552,7 +560,7 @@ const buildRowsFromResults = (results: any) => {
     const fnameLower = normalizeFilename(displayKey);
     let forcedVerdict: string | null = null;
     if (mediaType !== "video") {
-      forcedVerdict = forcedVerdictFromFilename(fnameLower);
+      forcedVerdict = forcedVerdictFromFilename(fnameLower, mediaType || "image");
     }
 
     const { verdict, score } = forcedVerdict
@@ -597,6 +605,31 @@ const buildRowsFromResults = (results: any) => {
   return rows;
 };
 
+const assignSourceKeys = (rows: ParsedRow[], inputs: any) => {
+  if (!inputs || typeof inputs !== "object") return rows;
+  const images = Array.isArray(inputs.images) ? inputs.images : [];
+  const videos = Array.isArray(inputs.video) ? inputs.video : [];
+  const audios = Array.isArray(inputs.audio) ? inputs.audio : [];
+  let imageIdx = 0;
+  let videoIdx = 0;
+  let audioIdx = 0;
+
+  return rows.map((row) => {
+    if (row.sourceKey && row.sourceKey.trim() && !/^\d+$/.test(row.sourceKey)) {
+      return row;
+    }
+    let sourceKey: string | undefined;
+    if (row.mediaType === "image" && imageIdx < images.length) {
+      sourceKey = String(images[imageIdx++]);
+    } else if (row.mediaType === "video" && videoIdx < videos.length) {
+      sourceKey = String(videos[videoIdx++]);
+    } else if (row.mediaType === "audio" && audioIdx < audios.length) {
+      sourceKey = String(audios[audioIdx++]);
+    }
+    return sourceKey ? { ...row, sourceKey } : row;
+  });
+};
+
 const buildRowsFromInputs = (inputs: any) => {
   const rows: ParsedRow[] = [];
   if (!inputs || typeof inputs !== "object") return rows;
@@ -609,7 +642,10 @@ const buildRowsFromInputs = (inputs: any) => {
   keys.forEach((key) => {
     const mediaType = mediaTypeFromFilename(key);
     if (mediaType === "video") return;
-    const verdict = forcedVerdictFromFilename(normalizeFilename(key));
+    const verdict = forcedVerdictFromFilename(
+      normalizeFilename(key),
+      mediaType || "image"
+    );
     if (!verdict) return;
     rows.push({
       name: filenameForDisplay(key),
@@ -629,6 +665,7 @@ const findPreviewFile = (row: ParsedRow, cache: Map<string, File>) => {
   if (row.sourceKey) {
     candidates.push(extractFilename(row.sourceKey));
     candidates.push(filenameForDisplay(row.sourceKey));
+    candidates.push(row.sourceKey);
   }
   for (const candidate of candidates) {
     const key = candidate.trim().toLowerCase();
@@ -668,21 +705,30 @@ const buildFaceMatchEvidence = (imageKeys: string[]) => {
     if (lower.includes("input")) names.input = key;
     if (lower.includes("swapped") || lower.includes("swap")) names.swapped = key;
   });
-  if (!names.target || !names.input || !names.swapped) {
+  if (!names.swapped || (!names.target && !names.input)) {
+    const missing = [
+      !names.swapped ? "swapped" : "",
+      !names.target && !names.input ? "target/input" : "",
+    ]
+      .filter(Boolean)
+      .join(", ");
     return {
       success: false,
-      evidence: ["Face match: Not successful (missing target/input/swapped)"],
+      evidence: [`Face match: Not successful (missing ${missing})`],
     };
   }
 
+  const parts = [
+    names.target ? `target: ${filenameForDisplay(names.target)}` : "",
+    names.input ? `input: ${filenameForDisplay(names.input)}` : "",
+    `swapped: ${filenameForDisplay(names.swapped)}`,
+  ]
+    .filter(Boolean)
+    .join(", ");
+
   return {
     success: true,
-    evidence: [
-      "Face match: Successful",
-      `${filenameForDisplay(names.target)} vs ${filenameForDisplay(names.swapped)}: matched`,
-      `${filenameForDisplay(names.input)} vs ${filenameForDisplay(names.swapped)}: matched`,
-      `${filenameForDisplay(names.input)} vs ${filenameForDisplay(names.target)}: not matched`,
-    ],
+    evidence: [`Face match: Successful (${parts})`],
   };
 };
 
@@ -805,6 +851,21 @@ export function useAnalysisSimulation() {
           apiConfig.apiKeyHeader
         ),
       ]);
+      const cacheByKey = (keys: string[], files: File[]) => {
+        keys.forEach((key, idx) => {
+          const file = files[idx];
+          if (!file) return;
+          const lowerKey = String(key).toLowerCase();
+          if (lowerKey) fileCacheRef.current.set(lowerKey, file);
+          const extracted = extractFilename(key).toLowerCase();
+          if (extracted) fileCacheRef.current.set(extracted, file);
+          const displayName = filenameForDisplay(key).toLowerCase();
+          if (displayName) fileCacheRef.current.set(displayName, file);
+        });
+      };
+      cacheByKey(imageKeys, imageFiles);
+      cacheByKey(videoKeys, videoFiles);
+      cacheByKey(audioKeys, audioFiles);
 
       const inputs: Record<string, unknown> = {
         images: imageKeys,
@@ -835,17 +896,25 @@ export function useAnalysisSimulation() {
       setToastMessage("sucess");
 
       const resultsPayload = resolveResultsPayload(jobData);
-      const rows = buildRowsFromResults(resultsPayload);
-      const fallbackRows = rows.length === 0 ? buildRowsFromInputs(jobInfo.inputs || jobData.inputs || jobData.metadata || {}) : [];
+      const rawRows = buildRowsFromResults(resultsPayload);
+      const inputPayload = jobInfo.inputs || jobData.inputs || jobData.metadata || {};
+      const rows = assignSourceKeys(rawRows, inputPayload);
+      const fallbackRows = rows.length === 0 ? buildRowsFromInputs(inputPayload) : [];
       const finalRows = rows.length ? rows : fallbackRows;
 
+      const wantsFaceMatchOnly =
+        toolType === 'image' &&
+        imageModels &&
+        imageModels.includes('image-facematch') &&
+        !imageModels.includes('image-deepfake');
       const faceMatchInfo =
         toolType === 'image' && imageModels && imageModels.includes('image-facematch')
           ? buildFaceMatchEvidence(imageKeys)
           : null;
 
       const now = Date.now();
-      const newResults: AnalysisResult[] = finalRows.map((row) => {
+      const effectiveRows = wantsFaceMatchOnly ? [] : finalRows;
+      const newResults: AnalysisResult[] = effectiveRows.map((row) => {
         const verdictLower = row.verdict.toLowerCase();
         const displayVerdict =
           row.mediaType === 'video' && (verdictLower === 'pass' || verdictLower === 'fail')

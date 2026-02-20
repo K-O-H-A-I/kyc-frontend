@@ -491,10 +491,6 @@ const extractIsLive = (obj: any) => {
 };
 
 const extractVerdictAndScore = (value: any) => {
-  if (!value || typeof value !== "object") return { verdict: "", score: null as number | null };
-  const output = value.output && typeof value.output === "object" ? value.output : value;
-  const dataBlock = value.data && typeof value.data === "object" ? value.data : null;
-
   const scoreFromObject = (obj: any) => {
     if (!obj || typeof obj !== "object") return null;
     for (const key of ["score", "confidence", "probability", "liveness_score"]) {
@@ -502,6 +498,22 @@ const extractVerdictAndScore = (value: any) => {
     }
     return null;
   };
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return { verdict: trimmed ? value : "", score: null };
+  }
+  if (!value || typeof value !== "object") return { verdict: "", score: null as number | null };
+
+  if (typeof value.output === "string") {
+    const trimmed = value.output.trim();
+    if (trimmed) {
+      return { verdict: value.output, score: scoreFromObject(value) };
+    }
+  }
+
+  const output = value.output && typeof value.output === "object" ? value.output : value;
+  const dataBlock = value.data && typeof value.data === "object" ? value.data : null;
 
   const predictions =
     extractPredictions(output) || extractPredictions(value) || extractPredictions(dataBlock) || [];
@@ -549,7 +561,7 @@ const resolveResultsPayload = (data: any) => {
   return data.results || data.outputs || data.output || {};
 };
 
-const buildRowsFromResults = (results: any) => {
+const buildRowsFromResults = (results: any, preferredToolType: ToolType | "" = "") => {
   const rows: ParsedRow[] = [];
   if (!results) return rows;
 
@@ -582,6 +594,9 @@ const buildRowsFromResults = (results: any) => {
       if (lowerKey.includes("audio") || lowerKey.includes("voice")) mediaType = "audio";
       if (lowerKey.includes("image")) mediaType = "image";
     }
+    if (!mediaType && preferredToolType && preferredToolType !== "document") {
+      mediaType = preferredToolType;
+    }
 
     const fnameLower = normalizeFilename(displayKey);
     const filenameHasRealFake =
@@ -593,7 +608,7 @@ const buildRowsFromResults = (results: any) => {
           fnameLower.includes("target") ||
           fnameLower.includes("input")));
     let forcedVerdict: string | null = null;
-    if (mediaType !== "video") {
+    if (mediaType === "image") {
       forcedVerdict = forcedVerdictFromFilename(fnameLower, mediaType || "image");
     }
 
@@ -615,7 +630,7 @@ const buildRowsFromResults = (results: any) => {
     }
 
     if (
-      (mediaType === "image" || mediaType === "audio") &&
+      mediaType === "image" &&
       filenameHasRealFake &&
       !verdictLower.includes("real") &&
       !verdictLower.includes("fake") &&
@@ -679,7 +694,7 @@ const isFaceMatchRow = (row: ParsedRow) => {
   return label.includes("facematch") || label.includes("face match");
 };
 
-const buildRowsFromInputs = (inputs: any) => {
+const buildRowsFromInputs = (inputs: any, preferredToolType: ToolType | "" = "") => {
   const rows: ParsedRow[] = [];
   if (!inputs || typeof inputs !== "object") return rows;
   const keys: string[] = [];
@@ -690,7 +705,9 @@ const buildRowsFromInputs = (inputs: any) => {
 
   keys.forEach((key) => {
     const mediaType = mediaTypeFromFilename(key);
-    if (mediaType === "video") return;
+    const effectiveType =
+      mediaType || (preferredToolType && preferredToolType !== "document" ? preferredToolType : "");
+    if (effectiveType !== "image") return;
     const verdict = forcedVerdictFromFilename(
       normalizeFilename(key),
       mediaType || "image"
@@ -700,7 +717,7 @@ const buildRowsFromInputs = (inputs: any) => {
       name: filenameForDisplay(key),
       verdict,
       score: null,
-      mediaType: mediaType as ParsedRow['mediaType'],
+      mediaType: effectiveType as ParsedRow['mediaType'],
       sourceKey: String(key),
     });
   });
@@ -936,10 +953,11 @@ export function useAnalysisSimulation() {
       setToastMessage("sucess");
 
       const resultsPayload = resolveResultsPayload(jobData);
-      const rawRows = buildRowsFromResults(resultsPayload);
+      const rawRows = buildRowsFromResults(resultsPayload, toolType);
       const inputPayload = jobInfo.inputs || jobData.inputs || jobData.metadata || {};
       const rows = assignSourceKeys(rawRows, inputPayload);
-      const fallbackRows = rows.length === 0 ? buildRowsFromInputs(inputPayload) : [];
+      const fallbackRows =
+        rows.length === 0 ? buildRowsFromInputs(inputPayload, toolType) : [];
       const finalRows = rows.length ? rows : fallbackRows;
 
       const wantsFaceMatchOnly =

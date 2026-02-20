@@ -399,6 +399,19 @@ const filenameForDisplay = (rawKey: string) => {
 
 const VIDEO_EXTENSIONS = new Set(["mp4", "mov", "avi", "mkv", "webm", "m4v", "flv"]);
 const AUDIO_EXTENSIONS = new Set(["mp3", "wav", "m4a", "aac", "flac", "ogg", "opus"]);
+const IMAGE_EXTENSIONS = new Set([
+  "jpg",
+  "jpeg",
+  "png",
+  "webp",
+  "gif",
+  "bmp",
+  "tiff",
+  "tif",
+  "heic",
+  "heif",
+  "jfif",
+]);
 
 const mediaTypeFromFilename = (rawKey: string) => {
   const name = extractFilename(rawKey);
@@ -408,7 +421,8 @@ const mediaTypeFromFilename = (rawKey: string) => {
   const ext = name.slice(dotIdx + 1).toLowerCase();
   if (VIDEO_EXTENSIONS.has(ext)) return "video";
   if (AUDIO_EXTENSIONS.has(ext)) return "audio";
-  return "image";
+  if (IMAGE_EXTENSIONS.has(ext)) return "image";
+  return "";
 };
 
 const mediaTypeFromTool = (toolName: string) => {
@@ -509,8 +523,9 @@ const extractVerdictAndScore = (value: any) => {
     return "";
   };
 
-  const extractLabelFromObject = (obj: any) => {
+  const extractLabelFromObject = (obj: any, depth = 0): string => {
     if (!obj || typeof obj !== "object") return "";
+    if (depth > 2) return "";
     const keys = [
       "verdict",
       "label",
@@ -526,6 +541,16 @@ const extractVerdictAndScore = (value: any) => {
     for (const key of keys) {
       const text = stringFromValue(obj[key]);
       if (text) return text;
+    }
+    const nestedKeys = ["output", "outputs", "result", "results", "data", "prediction"];
+    for (const key of nestedKeys) {
+      const nested = obj[key];
+      const direct = stringFromValue(nested);
+      if (direct) return direct;
+      if (nested && typeof nested === "object") {
+        const nestedText = extractLabelFromObject(nested, depth + 1);
+        if (nestedText) return nestedText;
+      }
     }
     return "";
   };
@@ -1010,8 +1035,11 @@ export function useAnalysisSimulation() {
 
       const resultsPayload = resolveResultsPayload(jobData);
       const rawRows = buildRowsFromResults(resultsPayload, toolType);
+      const mergedRows = rawRows.length === 0
+        ? buildRowsFromResults(jobData, toolType)
+        : rawRows;
       const inputPayload = jobInfo.inputs || jobData.inputs || jobData.metadata || {};
-      const rows = assignSourceKeys(rawRows, inputPayload);
+      const rows = assignSourceKeys(mergedRows, inputPayload);
       const fallbackRows =
         rows.length === 0 ? buildRowsFromInputs(inputPayload, toolType) : [];
       const finalRows = rows.length ? rows : fallbackRows;

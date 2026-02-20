@@ -499,9 +499,44 @@ const extractVerdictAndScore = (value: any) => {
     return null;
   };
 
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    return { verdict: trimmed ? value : "", score: null };
+  const stringFromValue = (val: any): string => {
+    if (typeof val === "string") return val.trim();
+    if (typeof val === "number" || typeof val === "boolean") return String(val);
+    if (Array.isArray(val)) {
+      const parts = val.map(stringFromValue).filter(Boolean);
+      return parts.length ? parts.join(", ") : "";
+    }
+    return "";
+  };
+
+  const extractLabelFromObject = (obj: any) => {
+    if (!obj || typeof obj !== "object") return "";
+    const keys = [
+      "verdict",
+      "label",
+      "result",
+      "status",
+      "prediction",
+      "pred",
+      "class",
+      "classification",
+      "text",
+      "message",
+    ];
+    for (const key of keys) {
+      const text = stringFromValue(obj[key]);
+      if (text) return text;
+    }
+    return "";
+  };
+
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    const trimmed = String(value).trim();
+    return { verdict: trimmed ? String(value) : "", score: null };
   }
   if (!value || typeof value !== "object") return { verdict: "", score: null as number | null };
 
@@ -536,11 +571,15 @@ const extractVerdictAndScore = (value: any) => {
     return { verdict: isLive ? "pass" : "fail", score: scoreFromObject(output) };
   }
 
-  if (typeof output.verdict === "string" && output.verdict.trim()) {
-    return { verdict: output.verdict, score: scoreFromObject(output) };
-  }
-  if (typeof output.label === "string" && output.label.trim()) {
-    return { verdict: output.label, score: scoreFromObject(output) };
+  const label =
+    extractLabelFromObject(output) ||
+    extractLabelFromObject(value) ||
+    extractLabelFromObject(dataBlock);
+  if (label) {
+    return {
+      verdict: label,
+      score: scoreFromObject(output) ?? scoreFromObject(value) ?? scoreFromObject(dataBlock),
+    };
   }
 
   return { verdict: "", score: null };
@@ -567,7 +606,9 @@ const buildRowsFromResults = (results: any, preferredToolType: ToolType | "" = "
 
   const entries: Array<{ key: string; value: any }> = Array.isArray(results)
     ? results.map((value, idx) => ({ key: String(idx), value }))
-    : Object.entries(results).map(([key, value]) => ({ key, value }));
+    : results && typeof results === "object"
+      ? Object.entries(results).map(([key, value]) => ({ key, value }))
+      : [{ key: "result", value: results }];
 
   for (const { key, value } of entries) {
     const resultValue = value && typeof value === "object" ? value : { output: value };
@@ -616,16 +657,31 @@ const buildRowsFromResults = (results: any, preferredToolType: ToolType | "" = "
       ? { verdict: forcedVerdict, score: null }
       : extractVerdictAndScore(resultValue);
 
-    if (!verdict) continue;
-    const verdictLower = verdict.toLowerCase();
+    let resolvedVerdict = verdict;
+    if (!resolvedVerdict) {
+      const rawOutput = resultValue.output ?? resultValue;
+      if (typeof rawOutput === "string") {
+        resolvedVerdict = rawOutput.trim();
+      } else if (typeof rawOutput === "number" || typeof rawOutput === "boolean") {
+        resolvedVerdict = String(rawOutput);
+      } else if (rawOutput && typeof rawOutput === "object") {
+        try {
+          resolvedVerdict = JSON.stringify(rawOutput);
+        } catch (error) {
+          resolvedVerdict = "";
+        }
+      }
+    }
+
+    if (!resolvedVerdict) continue;
+    const verdictLower = resolvedVerdict.toLowerCase();
     const isFaceMatch =
       sourceTool.toLowerCase().includes("facematch") ||
       sourceTool.toLowerCase().includes("face match");
     if (verdictLower === "pass" || verdictLower === "fail") {
       if (!mediaType) {
-        mediaType = "video";
-      } else if (mediaType !== "video") {
-        continue;
+        mediaType =
+          preferredToolType && preferredToolType !== "document" ? preferredToolType : "video";
       }
     }
 
@@ -653,7 +709,7 @@ const buildRowsFromResults = (results: any, preferredToolType: ToolType | "" = "
 
     rows.push({
       name: displayLabel,
-      verdict,
+      verdict: resolvedVerdict,
       score,
       mediaType: (mediaType as ParsedRow['mediaType']) || "",
       sourceKey: String(key),

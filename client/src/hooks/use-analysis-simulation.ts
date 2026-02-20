@@ -909,7 +909,7 @@ export function useAnalysisSimulation() {
 
         const bucket = resolveBucketFromUploadUrl(uploadUrl) || DOCUMENT_BUCKET_FALLBACK;
         const analysis = await analyzeDocument(bucket, key);
-        setToastMessage("sucess");
+        setToastMessage("success");
 
         const riskScoreRaw =
           typeof analysis.risk_score === "number"
@@ -1039,7 +1039,7 @@ export function useAnalysisSimulation() {
         apiConfig.apiKey,
         apiConfig.apiKeyHeader
       );
-      setToastMessage("sucess");
+      setToastMessage("success");
 
       const resultsPayload = resolveResultsPayload(jobData);
       const rawRows = buildRowsFromResults(resultsPayload, toolType);
@@ -1082,7 +1082,7 @@ export function useAnalysisSimulation() {
         const previewFile = findPreviewFile(row, fileCacheRef.current);
         const hasRealOneVideo = originalVideoNamesRef.current.has("real_1.mp4");
         const isRealOneVideo =
-          row.mediaType === 'video' &&
+          toolType === 'video' &&
           (hasRealOneVideo ||
             normalizeFilename(previewFile?.name || "") === "real_1.mp4" ||
             normalizeFilename(row.name) === "real_1.mp4" ||

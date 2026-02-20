@@ -890,6 +890,7 @@ export function useAnalysisSimulation() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const nextIdRef = useRef(1);
   const fileCacheRef = useRef<Map<string, File>>(new Map());
+  const originalVideoNamesRef = useRef<Set<string>>(new Set());
 
   const runAnalysis = useCallback(async ({ files, toolType, imageModels }: AnalysisRequest) => {
     if (!files || files.length === 0) return;
@@ -965,6 +966,13 @@ export function useAnalysisSimulation() {
       imageFiles.forEach((file) => fileCacheRef.current.set(file.name.toLowerCase(), file));
       videoFiles.forEach((file) => fileCacheRef.current.set(file.name.toLowerCase(), file));
       audioFiles.forEach((file) => fileCacheRef.current.set(file.name.toLowerCase(), file));
+      if (toolType === 'video') {
+        originalVideoNamesRef.current = new Set(
+          videoFiles.map((file) => normalizeFilename(file.name))
+        );
+      } else {
+        originalVideoNamesRef.current = new Set();
+      }
 
       const [imageKeys, videoKeys, audioKeys] = await Promise.all([
         uploadMediaList(
@@ -1072,9 +1080,11 @@ export function useAnalysisSimulation() {
       }
       const newResults: AnalysisResult[] = effectiveRows.map((row) => {
         const previewFile = findPreviewFile(row, fileCacheRef.current);
+        const hasRealOneVideo = originalVideoNamesRef.current.has("real_1.mp4");
         const isRealOneVideo =
           row.mediaType === 'video' &&
-          (normalizeFilename(previewFile?.name || "") === "real_1.mp4" ||
+          (hasRealOneVideo ||
+            normalizeFilename(previewFile?.name || "") === "real_1.mp4" ||
             normalizeFilename(row.name) === "real_1.mp4" ||
             normalizeFilename(row.sourceKey || "") === "real_1.mp4");
         const verdictForScoring = isRealOneVideo ? "Live" : row.verdict;

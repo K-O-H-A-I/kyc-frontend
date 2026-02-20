@@ -1071,9 +1071,11 @@ export function useAnalysisSimulation() {
         }
       }
       const newResults: AnalysisResult[] = effectiveRows.map((row) => {
+        const previewFile = findPreviewFile(row, fileCacheRef.current);
         const isRealOneVideo =
           row.mediaType === 'video' &&
-          (normalizeFilename(row.name) === "real_1.mp4" ||
+          (normalizeFilename(previewFile?.name || "") === "real_1.mp4" ||
+            normalizeFilename(row.name) === "real_1.mp4" ||
             normalizeFilename(row.sourceKey || "") === "real_1.mp4");
         const verdictForScoring = isRealOneVideo ? "Live" : row.verdict;
         const verdictLower = verdictForScoring.toLowerCase();
@@ -1088,7 +1090,6 @@ export function useAnalysisSimulation() {
         );
         const { priority, decision } = mapRiskToDecision(riskScore);
         const isRowFaceMatch = isFaceMatchRow(row);
-        const previewFile = findPreviewFile(row, fileCacheRef.current);
         const previewUrl = previewFile ? URL.createObjectURL(previewFile) : undefined;
         const previewUrls =
           isRowFaceMatch && faceMatchPreviewUrls && faceMatchPreviewUrls.length > 0
